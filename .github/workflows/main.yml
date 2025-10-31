@@ -128,7 +128,6 @@ jobs:
           asset_content_type: application/gzip
 
   build-android:
-    if: ${{ false }}  # disable
     name: android
     runs-on: ubuntu-24.04
     strategy:
