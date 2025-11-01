@@ -6,7 +6,7 @@ on:
     tags-ignore:
       - '**'
   release:
-    types: [published]
+    types: [created]
     
 env:
   V8_VERSION: "14.1"
@@ -45,26 +45,16 @@ jobs:
           gn args --list out.gn/android.${{ matrix.platform }}.release
           gzip -9 -c out.gn/android.${{ matrix.platform }}.release/obj/libv8_monolith.a > ../libv8_monolith-android-${{ matrix.platform }}.a.gz
           tar -zcvf ../gen-android-${{ matrix.platform }}.tar.gz out.gn/android.${{ matrix.platform }}.release/gen
-      - name: Upload static library
+      - name: Upload release assets
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ github.workspace }}/libv8_monolith-android-${{ matrix.platform }}.a.gz
+            ${{ github.workspace }}/gen-android-${{ matrix.platform }}.tar.gz
+          token: ${{ github.token }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ github.workspace }}/libv8_monolith-android-${{ matrix.platform }}.a.gz
-          asset_name: libv8_monolith-android-${{ matrix.platform }}.clang.a.gz
-          asset_content_type: application/gzip
-      - name: Upload generated source
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ github.workspace }}/gen-android-${{ matrix.platform }}.tar.gz
-          asset_name: gen-android-${{ matrix.platform }}.clang.tar.gz
-          asset_content_type: application/gzip
 
   build-mac:
     if: false # disable
@@ -93,26 +83,16 @@ jobs:
           gn args --list out.gn/${{ matrix.platform }}.release
           gzip -9 -c out.gn/${{ matrix.platform }}.release/obj/libv8_monolith.a > ../libv8_monolith-mac-${{ matrix.platform }}.a.gz
           tar -zcvf ../gen-mac-${{ matrix.platform }}.tar.gz out.gn/${{ matrix.platform }}.release/gen
-      - name: Upload static library
+      - name: Upload release assets
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ github.workspace }}/libv8_monolith-mac-${{ matrix.platform }}.a.gz
+            ${{ github.workspace }}/gen-mac-${{ matrix.platform }}.tar.gz
+          token: ${{ github.token }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ github.workspace }}/libv8_monolith-mac-${{ matrix.platform }}.a.gz
-          asset_name: libv8_monolith-mac-${{ matrix.platform }}.a.gz
-          asset_content_type: application/gzip
-      - name: Upload generated source
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ github.workspace }}/gen-mac-${{ matrix.platform }}.tar.gz
-          asset_name: gen-mac-${{ matrix.platform }}.tar.gz
-          asset_content_type: application/gzip
 
   build-win:
     if: false # disable
@@ -153,23 +133,13 @@ jobs:
         run: |
           Compress-Archive -Path ${{ github.workspace }}/v8/out.gn/${{ matrix.platform }}.release/obj/v8_monolith.lib -Destination ${{ github.workspace }}/libv8_monolith-win-${{ matrix.platform }}.zip
           Compress-Archive -Path ${{ github.workspace }}/v8/out.gn/${{ matrix.platform }}.release/gen -Destination ${{ github.workspace }}/gen-win-${{ matrix.platform }}.zip
-      - name: Upload static library
+      - name: Upload release assets
         if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ github.workspace }}/libv8_monolith-win-${{ matrix.platform }}.zip
+            ${{ github.workspace }}/gen-win-${{ matrix.platform }}.zip
+          token: ${{ github.token }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ github.workspace }}/libv8_monolith-win-${{ matrix.platform }}.zip
-          asset_name: libv8_monolith-win-${{ matrix.platform }}.zip
-          asset_content_type: application/zip
-      - name: Upload generated source
-        if: github.event_name == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ${{ github.workspace }}/gen-win-${{ matrix.platform }}.zip
-          asset_name: gen-win-${{ matrix.platform }}.zip
-          asset_content_type: application/zip
