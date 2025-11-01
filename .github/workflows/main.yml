@@ -1,10 +1,5 @@
 name: build and publish v8 libs
 on:
-  push:
-    branches:
-      - '**'
-    tags-ignore:
-      - '**'
   release:
     types: [created]
     
