@@ -463,7 +463,7 @@ jobs:
 
   publish-release:
     name: publish release
-    needs: [build-android, build-apple, build-win]
+    needs: [build-apple, build-win]
     runs-on: ubuntu-latest
     steps:
     - name: Publish Release
