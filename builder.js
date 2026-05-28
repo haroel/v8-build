@@ -57,6 +57,7 @@ clang_base_path="${NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64"
             let gnArgs = gnParser(fs.readFileSync(argsPath, "utf8"));
             gnArgs.set("v8_enable_webassembly", "v8_enable_webassembly=false");
             gnArgs.set("v8_enable_pointer_compression", "v8_enable_pointer_compression=false");
+            gnArgs.set("cppgc_enable_caged_heap", "cppgc_enable_caged_heap=false");
             gnArgs.set("v8_enable_drumbrake", "v8_enable_drumbrake=false");
             fs.writeFileSync(argsPath, Array.from(gnArgs.values()).join("\n"));
             break;

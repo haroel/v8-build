@@ -28,5 +28,6 @@ v8_enable_i18n_support=false
 v8_enable_test_features=false
 v8_enable_sandbox=false
 v8_enable_pointer_compression=true
+cppgc_enable_caged_heap=false
 v8_enable_webassembly=true
 v8_enable_drumbrake=true
