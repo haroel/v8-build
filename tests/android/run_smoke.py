@@ -243,7 +243,8 @@ def device_command(log: CommandLog, serial: str | None) -> list[str]:
 
 
 def run_remote_smoke(
-    log: CommandLog, adb: list[str], command: str, token: str
+    log: CommandLog, adb: list[str], command: str, token: str,
+    expected_page_size: int | None = None
 ) -> None:
     marker = f"V8_SMOKE_EXIT_{token}"
     status_format = "\\n" + marker + "=%s\\n"
@@ -268,6 +269,24 @@ def run_remote_smoke(
         raise RuntimeError(f"Remote smoke test exited with {status}")
     if "SUCCESS: 14 checks passed" not in lines:
         raise RuntimeError("Remote smoke test did not report SUCCESS: 14 checks passed")
+    # Stock Android 6.0 images do not necessarily ship the getconf utility.
+    # Read the actual native sysconf(_SC_PAGESIZE) result from the test itself.
+    banners = [line for line in lines if line.startswith("V8 Android smoke test:")]
+    if len(banners) != 1:
+        raise RuntimeError("Missing or ambiguous native smoke-test page size")
+    banner = re.fullmatch(
+        r"V8 Android smoke test: version=\S+ pointer_bits=(?:32|64) "
+        r"page_size=([1-9][0-9]*)", banners[0]
+    )
+    if banner is None:
+        raise RuntimeError(f"Malformed native smoke-test page size: {banners[0]!r}")
+    page_size = int(banner.group(1))
+    log.write(f"Device page size (native sysconf): {page_size} bytes")
+    if expected_page_size is not None and page_size != expected_page_size:
+        raise RuntimeError(
+            f"Device page size is {page_size}, expected {expected_page_size}; "
+            "use a system image with the required page size"
+        )
     log.write("Remote smoke test verified: exit 0; 14 checks passed")
 
 
@@ -285,15 +304,6 @@ def run_on_device(
     sdk = log.run(adb + ["shell", "getprop", "ro.build.version.sdk"]).stdout.strip()
     if not sdk.isdigit() or int(sdk) < api:
         raise RuntimeError(f"Device API {sdk!r} is below the test's API {api}")
-    page_size = log.run(adb + ["shell", "getconf", "PAGE_SIZE"]).stdout.strip()
-    if not page_size.isdigit():
-        raise RuntimeError(f"Cannot determine device page size: {page_size!r}")
-    log.write(f"Device page size: {page_size} bytes")
-    if expected_page_size is not None and int(page_size) != expected_page_size:
-        raise RuntimeError(
-            f"Device page size is {page_size}, expected {expected_page_size}; "
-            "use a system image with the required page size"
-        )
 
     remote = f"/data/local/tmp/v8-smoke-{arch}-{os.getpid()}-{secrets.token_hex(4)}"
     if not re.fullmatch(r"/data/local/tmp/v8-smoke-(arm64|arm|x64)-\d+-[0-9a-f]{8}", remote):
@@ -308,7 +318,7 @@ def run_on_device(
         log.run(adb + ["push", str(runtime), remote + "/libc++_shared.so"])
         log.run(adb + ["shell", "chmod", "755", remote + "/v8_smoke"])
         command = f"LD_LIBRARY_PATH={shlex.quote(remote)} {shlex.quote(remote + '/v8_smoke')}"
-        run_remote_smoke(log, adb, command, remote.rsplit("/", 1)[-1])
+        run_remote_smoke(log, adb, command, remote.rsplit("/", 1)[-1], expected_page_size)
     except BaseException:
         failed = True
         raise

@@ -3,9 +3,22 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Build targets to retry against an existing draft release
+        type: choice
+        options: [all, android-x64, windows-debug]
+        default: all
+        required: true
+      release_tag:
+        description: Existing draft release tag for this V8 version
+        type: string
+        required: true
 
 env:
   V8_VERSION: "15.7.112.23"
+  RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
   ANDROID_TEST_API: "23"
   # Match the NDK runtime pinned by this V8 version's DEPS, independent of the
   # runner image's changing ANDROID_NDK_LATEST_HOME.
@@ -27,12 +40,17 @@ jobs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       release_id: ${{ steps.create_release.outputs.release_id }}
     steps:
-      - name: Create GitHub Release
+      - name: Create or validate draft release
         id: create_release
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = context.ref.replace('refs/tags/', '');
+            const tag = process.env.RELEASE_TAG;
+            const versionTag = `v${process.env.V8_VERSION}`;
+            const suffix = tag.startsWith(`${versionTag}-`) ? tag.slice(versionTag.length + 1) : '';
+            if (tag !== versionTag && (!suffix || !/^[A-Za-z0-9._-]+$/.test(suffix))) {
+              throw new Error(`Release tag must be ${versionTag} or ${versionTag}-<suffix>: ${tag}`);
+            }
             const body = [
               'V8 ${{ env.V8_VERSION }} Precompiled Static Libraries',
               '',
@@ -54,15 +72,85 @@ jobs:
               '- Package includes: static library + args.gn + args.full.txt'
             ].join('\n');
             
-            const release = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `Release-${tag}`,
-              draft: true,
-              prerelease: false,
-              body: body
-            });
+            let release;
+            if (context.eventName === 'workflow_dispatch') {
+              const releases = await github.paginate(github.rest.repos.listReleases, {
+                ...context.repo,
+                per_page: 100
+              });
+              const existing = releases.find(candidate => candidate.tag_name === tag);
+              if (!existing) {
+                throw new Error(`Draft release ${tag} does not exist; push a new version tag for a fresh build.`);
+              }
+              release = { data: existing };
+              if (!release.data.draft) {
+                throw new Error(`Release ${tag} is already published; targeted retries require a draft.`);
+              }
+              // A retry may update test/packaging code, but its compiled inputs
+              // must match the artifacts already attached to this release.
+              const buildInputs = async ref => {
+                const response = await github.rest.repos.getContent({
+                  ...context.repo,
+                  path: '',
+                  ref
+                });
+                if (!Array.isArray(response.data)) {
+                  throw new Error(`Cannot list build inputs at ${ref}`);
+                }
+                const files = response.data.filter(entry => entry.type === 'file' &&
+                  (entry.name === 'builder.js' || entry.name.endsWith('.gn')));
+                if (!files.some(entry => entry.name === 'builder.js') ||
+                    !files.some(entry => entry.name.endsWith('.gn'))) {
+                  throw new Error(`Missing builder.js or GN inputs at ${ref}`);
+                }
+                return new Map(files.map(entry => [entry.path, entry.sha]));
+              };
+              const [releasedInputs, retryInputs] = await Promise.all([
+                buildInputs(tag), buildInputs(context.sha)
+              ]);
+              const paths = [...new Set([...releasedInputs.keys(), ...retryInputs.keys()])];
+              const changed = paths.filter(path => releasedInputs.get(path) !== retryInputs.get(path));
+              if (changed.length) {
+                throw new Error(`Build inputs differ from ${tag}: ${changed.sort().join(', ')}; use a fresh release tag.`);
+              }
+              const target = context.payload.inputs?.target || 'all';
+              const outputs = {
+                'android-x64': ['libv8_monolith-android-x64.zip'],
+                'windows-debug': ['libv8_monolith-win-x64-debug.zip'],
+                all: [
+                  'libv8_monolith-android-arm64.zip',
+                  'libv8_monolith-android-arm.zip',
+                  'libv8_monolith-android-x64.zip',
+                  'include-android.zip',
+                  'libv8_monolith-win-x64-release.zip',
+                  'libv8_monolith-win-x64-debug.zip',
+                  'include-win.zip'
+                ]
+              };
+              if (!outputs[target]) {
+                throw new Error(`Unsupported retry target: ${target}`);
+              }
+              const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+                ...context.repo,
+                release_id: release.data.id,
+                per_page: 100
+              });
+              const duplicates = outputs[target].filter(name => assets.some(asset => asset.name === name));
+              if (duplicates.length) {
+                throw new Error(`Cannot retry ${target} for ${tag}; selected output assets already exist: ${duplicates.join(', ')}. Choose only a missing target; existing assets are not overwritten.`);
+              }
+              core.info(`Reusing draft ${tag}; builder.js and all GN input blob SHAs match ${context.sha}.`);
+            } else {
+              release = await github.rest.repos.createRelease({
+                ...context.repo,
+                tag_name: tag,
+                target_commitish: context.sha,
+                name: `Release-${tag}`,
+                draft: true,
+                prerelease: false,
+                body: body
+              });
+            }
             
             core.setOutput('upload_url', release.data.upload_url);
             core.setOutput('release_id', release.data.id);
@@ -70,6 +158,7 @@ jobs:
 
   build-android:
     name: android
+    if: github.event_name != 'workflow_dispatch' || inputs.target != 'windows-debug'
     env:
       JOB_NAME: android
     needs: create-release
@@ -77,7 +166,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [arm64, arm, x64]
+        platform: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target == 'android-x64' && '["x64"]' || '["arm64","arm","x64"]') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -419,6 +508,7 @@ jobs:
 
   build-win:
     name: windows
+    if: github.event_name != 'workflow_dispatch' || inputs.target != 'android-x64'
     env:
       JOB_NAME: win
     needs: create-release
@@ -427,7 +517,7 @@ jobs:
       fail-fast: false
       matrix:
         platform: [x64]
-        build_type: [release, debug]
+        build_type: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.target == 'windows-debug' && '["debug"]' || '["release","debug"]') }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -585,25 +675,52 @@ jobs:
 
   publish-release:
     name: publish release
-    needs: [build-android, build-win]
+    needs: [create-release, build-android, build-win]
+    if: >-
+      ${{ always() && needs.create-release.result == 'success' &&
+          (needs.build-android.result == 'success' ||
+           (github.event_name == 'workflow_dispatch' && inputs.target == 'windows-debug' && needs.build-android.result == 'skipped')) &&
+          (needs.build-win.result == 'success' ||
+           (github.event_name == 'workflow_dispatch' && inputs.target == 'android-x64' && needs.build-win.result == 'skipped')) }}
     runs-on: ubuntu-latest
     steps:
     - name: Publish Release
       uses: actions/github-script@v7
+      env:
+        EXPECTED_RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
       with:
         script: |
-          const tag = context.ref.replace('refs/tags/', '');
-          const releases = await github.rest.repos.listReleases({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
+          const tag = process.env.RELEASE_TAG;
+          const releases = await github.paginate(github.rest.repos.listReleases, {
+            ...context.repo,
+            per_page: 100
           });
-          const release = releases.data.find(r => r.tag_name === tag);
-          if (release) {
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release.id,
-              draft: false
-            });
-            console.log('Release published successfully');
+          const release = releases.find(candidate => candidate.tag_name === tag);
+          if (!release || String(release.id) !== process.env.EXPECTED_RELEASE_ID || !release.draft) {
+            throw new Error(`Draft release ${tag} changed or was already published during this build.`);
           }
+          const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+            ...context.repo,
+            release_id: release.id,
+            per_page: 100
+          });
+          const required = [
+            'libv8_monolith-android-arm64.zip',
+            'libv8_monolith-android-arm.zip',
+            'libv8_monolith-android-x64.zip',
+            'include-android.zip',
+            'libv8_monolith-win-x64-release.zip',
+            'libv8_monolith-win-x64-debug.zip',
+            'include-win.zip'
+          ];
+          const missing = required.filter(name => !assets.some(asset =>
+            asset.name === name && asset.size > 0 && asset.state === 'uploaded'));
+          if (missing.length) {
+            throw new Error(`Cannot publish ${tag}; required assets are missing, empty or unfinished: ${missing.join(', ')}`);
+          }
+          await github.rest.repos.updateRelease({
+            ...context.repo,
+            release_id: release.id,
+            draft: false
+          });
+          core.info(`Release ${tag} published after verifying all ${required.length} required assets.`);

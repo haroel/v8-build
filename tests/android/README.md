@@ -29,7 +29,10 @@ Use `--build-only` for link checks without a device, and `--output` to select a
 build directory. Commands and results are saved to
 `build/android-smoke/<arch>/smoke.log`. The runner cleans up its device directory.
 Use `--page-size 16384` to require a 16 KiB device, or `--page-size 4096` for the
-Android 6.0 test; a mismatched device fails before the executable is uploaded.
+Android 6.0 test. The runner checks the native test's `sysconf(_SC_PAGESIZE)`
+output; a mismatched, missing, or ambiguous result fails the test. It does not
+depend on the `getconf` shell utility, which is absent from some Android 6.0
+images.
 
 V8 15.7.112.23 pins NDK **30.0.16248370** in its `DEPS`; CI selects that exact
 version for the smoke compiler instead of the runner's floating latest NDK.
@@ -64,8 +67,8 @@ loader error or crash cannot silently pass CI.
 On the local Android 6.0 ARM64 emulator, the matching C++ runtime passed checks
 for threads, emulated TLS, TLS destruction, hash tables, and `__hash_memory`.
 The old API 29 V8 executable failed to load because `__fwrite_chk` was missing.
-The rebuilt API 23 V8 artifact must pass its own smoke test before compatibility
-is considered verified.
+The rebuilt API 23 ARM64 artifact's Android 6.0 and 16 KiB runtime results are
+recorded below. The x64 artifact still needs its own CI emulator checks.
 
 ## 16 KiB compatibility gate
 
@@ -79,7 +82,7 @@ The runner rejects arm64/x64 executables or `libc++_shared.so` whose ELF `LOAD`
 segments have alignment below 16384, or inconsistent file offsets and virtual
 addresses. The 32-bit ARM runtime uses 4096-byte alignment. CI additionally runs
 all 14 checks with the API 23 artifact in the API 35 `google_apis_ps16k` x86_64
-image, requiring `getconf PAGE_SIZE` to return exactly 16384. Both the Android
+image, requiring native `sysconf(_SC_PAGESIZE)` to return exactly 16384. Both the Android
 6.0 and 16 KiB tests must pass before release upload/publication.
 
 The published V8 library is a static `.a`, so final application linking and
@@ -92,7 +95,18 @@ See the [Android 16 KB page-size guide](https://developer.android.com/guide/prac
 
 ## Verification on 2026-11-04
 
-Artifacts: tag `v15.7.112.23-1`, workflow run `41770086489`.
+Rebuilt API 23 ARM64 artifact: tag `v15.7.112.23-4`, workflow run `41802156523`.
+
+- 14/14 checks passed on stock Android 6.0 / API 23 with 4096-byte pages,
+  without the `getconf` utility.
+- The same artifact passed 14/14 checks on Android 15 / API 35 ARM64 with
+  16384-byte pages. Both environments passed native page-size, API 23 linking,
+  ELF TLS, and load-alignment checks.
+- Requiring the wrong page size fails the runner even when all V8 checks pass.
+- Compiler: NDK 28.2.13676358; matching C++ runtime: NDK 30.0.16248370.
+  The x64 artifact still requires its own CI emulator tests.
+
+Earlier API 29 artifacts: tag `v15.7.112.23-1`, workflow run `41770086489`.
 
 - ARM64: 14/14 checks passed on an Android 16 / API 36 ARM64 emulator, with 4 KiB
   pages. Compiler: NDK 28.2.13676358; C++ runtime: NDK 30.0.16248370.
@@ -103,5 +117,5 @@ Artifacts: tag `v15.7.112.23-1`, workflow run `41770086489`.
   `sysconf(_SC_PAGESIZE)` reported 16384. The executable and matching NDK 30
   C++ runtime passed the ELF load-alignment check.
 - These runtime results use the older API 29 artifact. The rebuilt API 23
-  artifact still needs its own Android 6.0 and 16 KiB CI checks; the older
-  artifact's results do not establish Android 6.0 compatibility.
+  artifact's results are recorded separately above; the older artifact's
+  results do not establish Android 6.0 compatibility.
