@@ -6,6 +6,7 @@ on:
 
 env:
   V8_VERSION: "15.7.112.23"
+  ANDROID_TEST_API: "23"
   DEPOT_TOOLS_REPO: "https://chromium.googlesource.com/chromium/tools/depot_tools.git"
 
 permissions:
@@ -36,7 +37,7 @@ jobs:
               '',
               '## Supported Platforms',
               '',
-              '### Android (arm64, arm, x64)',
+              '### Android (arm64, arm, x64; Android 6.0 / API 23+)',
               '- Static library: `libv8_monolith-android-{arch}.zip`',
               '- Header files: `include-android.zip`',
               '- Each package includes: static library + args.gn + args.full.txt',
@@ -162,6 +163,44 @@ jobs:
           fi
           ls -a
           echo "::endgroup::"
+      - name: Link and inspect Android 6.0 smoke executable
+        run: |
+          artifact_root="$RUNNER_TEMP/v8-smoke-artifacts"
+          v8_out="$GITHUB_WORKSPACE/v8/out.gn/android.${{ matrix.platform }}.release"
+          mkdir -p "$artifact_root/headers" "$artifact_root/${{ matrix.platform }}"
+          cp -R "$GITHUB_WORKSPACE/v8/include" "$artifact_root/headers/"
+          cp "$v8_out/obj/libv8_monolith.a" "$v8_out/args.gn" "$v8_out/args.full.txt" "$artifact_root/${{ matrix.platform }}/"
+          python3 tests/android/run_smoke.py \
+            --artifacts "$artifact_root" \
+            --ndk "$ANDROID_NDK_LATEST_HOME" \
+            --runtime-ndk "$GITHUB_WORKSPACE/v8/third_party/android_toolchain/ndk" \
+            --arch "${{ matrix.platform }}" --api "$ANDROID_TEST_API" --build-only
+      - name: Enable KVM for Android 6.0 emulator
+        if: matrix.platform == 'x64'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run smoke test on Android 6.0
+        if: matrix.platform == 'x64'
+        timeout-minutes: 20
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.ANDROID_TEST_API }}
+          target: default
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            test "$(adb -s "emulator-$EMULATOR_PORT" shell getprop ro.build.version.sdk | tr -d '\r')" = "$ANDROID_TEST_API"
+            python3 tests/android/run_smoke.py --artifacts "$RUNNER_TEMP/v8-smoke-artifacts" --ndk "$ANDROID_NDK_LATEST_HOME" --runtime-ndk "$GITHUB_WORKSPACE/v8/third_party/android_toolchain/ndk" --arch x64 --api "$ANDROID_TEST_API" --serial "emulator-$EMULATOR_PORT"
+      - name: Upload Android compatibility logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-api23-${{ matrix.platform }}
+          path: build/android-smoke/${{ matrix.platform }}/smoke.log
+          if-no-files-found: ignore
       - name: Upload static library
         uses: actions/upload-release-asset@v1
         env:

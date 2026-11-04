@@ -10,7 +10,7 @@ English | [简体中文](README.ZH.md)
 
 ## Supported Platforms
 
-- **Android** (arm64, arm, x64)
+- **Android** (arm64, arm, x64; Android 6.0 / API 23 target)
 - **iOS** (XCFramework: arm64 device, arm64 simulator; CI temporarily disabled)
 - **macOS** (XCFramework: arm64 Apple Silicon; CI temporarily disabled)
 - **Windows** (x64, Release + Debug)
@@ -108,7 +108,7 @@ All builds are automated using [GitHub Actions](.github/workflows/main.yml):
 - Reproducible builds
 - Automated release creation
 
-Android uses the NDK and Clang pinned by V8's `DEPS`; a separate NDK installation is not required. After dependency sync and hooks complete, CI installs and checks the amd64 host sysroot immediately before GN generation, plus the i386 sysroot/runtime needed by ARM snapshot generation. Missing headers or startup libraries stop the build and report their absolute paths.
+Android uses the NDK and Clang pinned by V8's `DEPS`; a separate NDK installation is not required. After dependency sync and hooks complete, CI installs and checks the amd64 host sysroot immediately before GN generation, plus the i386 sysroot/runtime needed by ARM snapshot generation. Missing headers or startup libraries stop the build and report their absolute paths. All three architectures explicitly compile against API 23, enabling the pre-API-29 emulated TLS path. CI links a smoke executable against API 23 system stubs and rejects native ELF TLS before upload; x64 also runs all 14 checks in an Android 6.0 emulator. A failed compatibility test blocks publication. Earlier `15.7.112.23` artifacts built for API 29 must be rebuilt; lowering an application manifest alone is insufficient. See [Android smoke tests](tests/android/README.md).
 
 All platforms check `include/v8-version.h` before building and reject unused GN arguments. Platform settings are declared in the GN files without modifying V8 sources. Windows CI installs SDK `10.0.28000.0`, as required by this V8 version. Both Windows configurations use the upstream Torque generator (`v8_use_metagen=false`) because Metagen rejects `ExtendedMap` tail padding with the MSVC standard library.
 

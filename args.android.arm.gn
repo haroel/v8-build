@@ -1,6 +1,9 @@
 target_os="android"
 target_cpu="arm"
 v8_target_cpu="arm"
+# Android 6.0: compile against API 23, including pre-29 emulated TLS.
+default_min_sdk_version=23
+android_ndk_api_level=23
 clang_use_chrome_plugins=false
 chrome_pgo_phase=0
 dcheck_always_on=false
