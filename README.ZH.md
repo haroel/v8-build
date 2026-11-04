@@ -11,8 +11,8 @@
 ## 支持平台
 
 - **Android** (arm64, arm, x64)
-- **iOS** (XCFramework: arm64 真机、arm64 模拟器)
-- **macOS** (XCFramework: arm64 Apple Silicon)
+- **iOS** (XCFramework: arm64 真机、arm64 模拟器；CI 暂时关闭)
+- **macOS** (XCFramework: arm64 Apple Silicon；CI 暂时关闭)
 - **Windows** (x64，Release + Debug)
 
 ## 最新版本
@@ -28,13 +28,14 @@
 
 ## 构建产物
 
+当前发布包含 Android 和 Windows。Apple CI 暂时关闭，不参与构建或发布，也不阻塞发布流程。
+
 | 平台 | 产物文件 | 架构 | 说明 |
 |------|---------|------|------|
 | Android  | `libv8_monolith-android-arm64.zip` | arm64 | 静态库 + args.gn + args.full.txt |
 | Android  | `libv8_monolith-android-arm.zip` | arm | 静态库 + args.gn + args.full.txt |
 | Android  | `libv8_monolith-android-x64.zip` | x64 | 静态库 + args.gn + args.full.txt |
 | Android  | `include-android.zip` | - | V8 头文件 |
-| Apple    | `libv8_monolith-apple.zip` | arm64（iOS 真机+模拟器+macOS） | 单个 XCFramework，含每个切片的头文件 + args.gn + args.full.txt |
 | Windows  | `libv8_monolith-win-x64-release.zip` | x64 | Release 静态库 + args.gn + args.full.txt |
 | Windows  | `libv8_monolith-win-x64-debug.zip` | x64 | Debug 静态库 + args.gn + args.full.txt |
 | Windows  | `include-win.zip` | - | V8 头文件 |
@@ -49,6 +50,8 @@
 - [args.android.x64.gn](args.android.x64.gn)
 
 ### Apple（iOS + macOS）
+
+保留以下配置和打包说明，方便之后恢复 Apple CI；当前工作流不构建或发布该包。
 
 - [args.ios.arm64.gn](args.ios.arm64.gn) - iOS 真机
 - [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - iOS 模拟器
@@ -86,7 +89,7 @@ libv8_monolith.xcframework/
 - ✅ 跨平台统一配置
 - ✅ 编译前验证源码版本 ([builder.js](builder.js))
 - ✅ 完整的构建参数可追溯性
-- ✅ Apple 各平台共用一个 XCFramework，保留各切片独立头文件
+- 保留 Apple XCFramework 配置（CI 暂时关闭）
 - ✅ Windows 提供 Release 和 Debug 包
 
 ## 使用方法
@@ -107,7 +110,7 @@ libv8_monolith.xcframework/
 
 Android 使用 V8 `DEPS` 固定的 NDK 和 Clang，不需要单独安装 NDK。同步依赖和 hooks 完成后，CI 在生成 GN 构建文件前安装并检查 amd64 主机 sysroot，以及 ARM 快照生成所需的 i386 sysroot 和运行库。缺少头文件或启动库时会立即停止构建，并报告对应的绝对路径。
 
-所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。
+所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。Windows 两种配置均使用上游 Torque 生成路径（`v8_use_metagen=false`），避开 Metagen 对 MSVC 标准库下 `ExtendedMap` 尾部填充的检查失败。
 
 ## V8 文档
 

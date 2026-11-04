@@ -29,4 +29,7 @@ v8_enable_fuzztest=false
 v8_enable_webassembly=true
 v8_imminent_deprecation_warnings=false
 v8_monolithic=true
+# V8 15.7 Metagen rejects ExtendedMap's Windows padding (fields 73, size 76).
+# Use the upstream Torque generator until Metagen supports this layout.
+v8_use_metagen=false
 v8_use_external_startup_data=false

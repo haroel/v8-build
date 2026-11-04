@@ -41,12 +41,6 @@ jobs:
               '- Header files: `include-android.zip`',
               '- Each package includes: static library + args.gn + args.full.txt',
               '',
-              '### Apple (XCFramework)',
-              '- Package: `libv8_monolith-apple.zip`',
-              '- Slices: `ios-arm64` (device) / `ios-arm64-simulator` / `macos-arm64`',
-              '- Each slice ships its own Headers built with that slice\'s gn args (iOS disables wasm/drumbrake, macOS keeps wasm enabled)',
-              '- Includes: XCFramework + args.gn + args.full.txt for all three slices',
-              '',
               '### Windows (x64)',
               '- Static library: `libv8_monolith-win-x64-release.zip` (Release)',
               '- Static library: `libv8_monolith-win-x64-debug.zip` (Debug)',
@@ -189,6 +183,8 @@ jobs:
           asset_content_type: application/zip
 
   build-apple:
+    # Temporarily paused while Android and Windows builds are stabilized.
+    if: false
     name: apple
     env:
       JOB_NAME: apple
@@ -480,7 +476,7 @@ jobs:
 
   publish-release:
     name: publish release
-    needs: [build-android, build-apple, build-win]
+    needs: [build-android, build-win]
     runs-on: ubuntu-latest
     steps:
     - name: Publish Release
