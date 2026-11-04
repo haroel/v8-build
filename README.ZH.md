@@ -6,14 +6,14 @@
 
 ## 当前 V8 版本
 
-**14.3.92**
+**15.7.112.23**
 
 ## 支持平台
 
 - **Android** (arm64, arm, x64)
 - **iOS** (XCFramework: arm64 真机、arm64 模拟器)
 - **macOS** (XCFramework: arm64 Apple Silicon)
-- **Windows** (x64)
+- **Windows** (x64，Release + Debug)
 
 ## 最新版本
 
@@ -34,9 +34,9 @@
 | Android  | `libv8_monolith-android-arm.zip` | arm | 静态库 + args.gn + args.full.txt |
 | Android  | `libv8_monolith-android-x64.zip` | x64 | 静态库 + args.gn + args.full.txt |
 | Android  | `include-android.zip` | - | V8 头文件 |
-| iOS      | `libv8_monolith-ios.zip` | arm64（真机+模拟器） | XCFramework（含头文件 + args.gn + args.full.txt） |
-| macOS    | `libv8_monolith-mac.zip` | arm64（Apple Silicon） | XCFramework（含头文件 + args.gn + args.full.txt） |
-| Windows  | `libv8_monolith-win-x64.zip` | x64 | 静态库 + args.gn + args.full.txt |
+| Apple    | `libv8_monolith-apple.zip` | arm64（iOS 真机+模拟器+macOS） | 单个 XCFramework，含每个切片的头文件 + args.gn + args.full.txt |
+| Windows  | `libv8_monolith-win-x64-release.zip` | x64 | Release 静态库 + args.gn + args.full.txt |
+| Windows  | `libv8_monolith-win-x64-debug.zip` | x64 | Debug 静态库 + args.gn + args.full.txt |
 | Windows  | `include-win.zip` | - | V8 头文件 |
 
 ## 构建配置文件
@@ -48,52 +48,34 @@
 - [args.android.arm.gn](args.android.arm.gn)
 - [args.android.x64.gn](args.android.x64.gn)
 
-### iOS
-- [args.ios.arm64.gn](args.ios.arm64.gn) - 真机设备配置
-- [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - 模拟器配置
+### Apple（iOS + macOS）
 
-**注意**：iOS 构建会生成一个 XCFramework，同时支持 arm64 真机和 arm64 模拟器平台。
+- [args.ios.arm64.gn](args.ios.arm64.gn) - iOS 真机
+- [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - iOS 模拟器
+- [args.mac.arm64.gn](args.mac.arm64.gn) - macOS Apple Silicon
 
-**iOS XCFramework 结构**:
+`libv8_monolith-apple.zip` 包含一个 XCFramework，提供三个 arm64 切片：
+
 ```
 libv8_monolith.xcframework/
-├── ios-arm64/                          # 真机
-│   └── libv8_monolith.framework/
-│       ├── Headers/                    # V8 头文件
-│       ├── libv8_monolith              # 静态库
-│       └── Info.plist
-└── ios-arm64-simulator/                # 模拟器
-    └── libv8_monolith.framework/
-        ├── Headers/                    # V8 头文件
-        ├── libv8_monolith              # 静态库
-        └── Info.plist
+├── ios-arm64/
+├── ios-arm64-simulator/
+└── macos-arm64/
 ```
 
-**在 Xcode 中使用**:
-1. 将 `libv8_monolith.xcframework` 拖入 Xcode 项目
-2. 添加到 "Frameworks, Libraries, and Embedded Content"
-3. 导入头文件：`#include <libv8_monolith/v8.h>`
-4. Xcode 会自动选择正确的变体（真机/模拟器）
+每个切片都有独立的 `libv8_monolith.framework`，包含静态库、`Info.plist` 和该切片构建时生成的头文件。iOS 保持关闭 JavaScript JIT、WebAssembly、DrumBrake、指针压缩及 cppgc caged heap；macOS 保持启用 WebAssembly。
 
-### macOS
-- [args.mac.arm64.gn](args.mac.arm64.gn)
+在 Xcode 中使用：
 
-**注意**：macOS 构建会生成一个 XCFramework，支持 arm64（Apple Silicon）。
-
-**macOS XCFramework 结构**:
-```
-libv8_monolith.xcframework/
-└── macos-arm64/                        # Apple Silicon
-    └── libv8_monolith.framework/
-        ├── Headers/                    # V8 头文件
-        ├── libv8_monolith              # 静态库
-        └── Info.plist
-```
-
-**在 Xcode 中使用**：与 iOS 相同，直接拖拽到项目中即可
+1. 将 `libv8_monolith.xcframework` 拖入项目。
+2. 添加到 "Frameworks, Libraries, and Embedded Content"。
+3. 导入头文件：`#include <libv8_monolith/v8.h>`。
+4. Xcode 自动选择对应的平台切片。
 
 ### Windows
-- [args.win.x64.gn](args.win.x64.gn)
+
+- [args.win.x64.release.gn](args.win.x64.release.gn) - Release
+- [args.win.x64.debug.gn](args.win.x64.debug.gn) - Debug
 
 ### XCFramework 配置
 - [Info.plist.template](Info.plist.template) - XCFramework Info.plist 模板文件（构建时自动替换版本号）
@@ -102,9 +84,10 @@ libv8_monolith.xcframework/
 
 - ✅ 通过 GitHub Actions 自动化构建
 - ✅ 跨平台统一配置
-- ✅ 平台特定优化的预构建脚本 ([builder.js](builder.js))
+- ✅ 编译前验证源码版本 ([builder.js](builder.js))
 - ✅ 完整的构建参数可追溯性
-- ✅ iOS 平台已启用 WebAssembly 支持
+- ✅ Apple 各平台共用一个 XCFramework，保留各切片独立头文件
+- ✅ Windows 提供 Release 和 Debug 包
 
 ## 使用方法
 
@@ -118,9 +101,13 @@ libv8_monolith.xcframework/
 
 所有构建均通过 [GitHub Actions](.github/workflows/main.yml) 自动化完成：
 - 为每个平台提供干净的构建环境
-- 使用统一的 depot_tools 版本
+- 源码与依赖锁定到同一个 V8 标签
 - 可重现的构建过程
 - 自动创建发布版本
+
+Android 使用 V8 `DEPS` 固定的 NDK 和 Clang，不需要单独安装 NDK。同步依赖后，CI 安装 amd64 主机 sysroot，以及 ARM 快照生成所需的 i386 sysroot 和运行库。依赖安装失败时会立即停止构建。
+
+所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。
 
 ## V8 文档
 

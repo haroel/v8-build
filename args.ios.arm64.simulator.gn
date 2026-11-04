@@ -26,8 +26,12 @@ v8_use_external_startup_data=false
 v8_enable_gdbjit=false
 v8_enable_i18n_support=false
 v8_enable_test_features=false
+v8_enable_fuzztest=false
 v8_enable_sandbox=false
-v8_enable_pointer_compression=true
+v8_enable_pointer_compression=false
 cppgc_enable_caged_heap=false
-v8_enable_webassembly=true
-v8_enable_drumbrake=true
+v8_enable_webassembly=false
+v8_enable_drumbrake=false
+# Keep the existing iOS JITless build without Wasm or a caged heap.
+v8_enable_lite_mode=true
+v8_enable_turbofan=false

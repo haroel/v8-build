@@ -6,14 +6,14 @@ English | [简体中文](README.ZH.md)
 
 ## Current V8 Version
 
-**14.3.92**
+**15.7.112.23**
 
 ## Supported Platforms
 
 - **Android** (arm64, arm, x64)
 - **iOS** (XCFramework: arm64 device, arm64 simulator)
 - **macOS** (XCFramework: arm64 Apple Silicon)
-- **Windows** (x64)
+- **Windows** (x64, Release + Debug)
 
 ## Latest Release
 
@@ -34,9 +34,9 @@ Each release includes zip packages with:
 | Android  | `libv8_monolith-android-arm.zip` | arm | Static library + args.gn + args.full.txt |
 | Android  | `libv8_monolith-android-x64.zip` | x64 | Static library + args.gn + args.full.txt |
 | Android  | `include-android.zip` | - | V8 header files |
-| iOS      | `libv8_monolith-ios.zip` | arm64 (device + simulator) | XCFramework with headers + args.gn + args.full.txt |
-| macOS    | `libv8_monolith-mac.zip` | arm64 (Apple Silicon) | XCFramework with headers + args.gn + args.full.txt |
-| Windows  | `libv8_monolith-win-x64.zip` | x64 | Static library + args.gn + args.full.txt |
+| Apple    | `libv8_monolith-apple.zip` | arm64 (iOS device + simulator + macOS) | One XCFramework with headers + args.gn + args.full.txt for every slice |
+| Windows  | `libv8_monolith-win-x64-release.zip` | x64 | Release static library + args.gn + args.full.txt |
+| Windows  | `libv8_monolith-win-x64-debug.zip` | x64 | Debug static library + args.gn + args.full.txt |
 | Windows  | `include-win.zip` | - | V8 header files |
 
 ## Build Configuration Files
@@ -48,52 +48,34 @@ The repository contains GN build configuration files for each platform:
 - [args.android.arm.gn](args.android.arm.gn)
 - [args.android.x64.gn](args.android.x64.gn)
 
-### iOS
-- [args.ios.arm64.gn](args.ios.arm64.gn) - Device configuration
-- [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - Simulator configuration
+### Apple (iOS + macOS)
 
-**Note**: The iOS build produces an XCFramework that supports both arm64 device and arm64 simulator platforms.
+- [args.ios.arm64.gn](args.ios.arm64.gn) - iOS device
+- [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - iOS simulator
+- [args.mac.arm64.gn](args.mac.arm64.gn) - macOS Apple Silicon
 
-**iOS XCFramework Structure**:
+`libv8_monolith-apple.zip` contains one XCFramework with three arm64 slices:
+
 ```
 libv8_monolith.xcframework/
-├── ios-arm64/                          # Device
-│   └── libv8_monolith.framework/
-│       ├── Headers/                    # V8 header files
-│       ├── libv8_monolith              # Static library
-│       └── Info.plist
-└── ios-arm64-simulator/                # Simulator
-    └── libv8_monolith.framework/
-        ├── Headers/                    # V8 header files
-        ├── libv8_monolith              # Static library
-        └── Info.plist
+├── ios-arm64/
+├── ios-arm64-simulator/
+└── macos-arm64/
 ```
 
-**Usage in Xcode**:
-1. Drag `libv8_monolith.xcframework` into your Xcode project
-2. Add to "Frameworks, Libraries, and Embedded Content"
-3. Import headers: `#include <libv8_monolith/v8.h>`
-4. Xcode automatically selects the correct variant (device/simulator)
+Each slice contains `libv8_monolith.framework` with its static library, `Info.plist`, and its own headers, including generated headers from that slice's build. iOS keeps JavaScript JIT, WebAssembly, DrumBrake, pointer compression, and the cppgc caged heap disabled; macOS keeps WebAssembly enabled.
 
-### macOS
-- [args.mac.arm64.gn](args.mac.arm64.gn)
+To use in Xcode:
 
-**Note**: The macOS build produces an XCFramework for arm64 (Apple Silicon).
-
-**macOS XCFramework Structure**:
-```
-libv8_monolith.xcframework/
-└── macos-arm64/                        # Apple Silicon
-    └── libv8_monolith.framework/
-        ├── Headers/                    # V8 header files
-        ├── libv8_monolith              # Static library
-        └── Info.plist
-```
-
-**Usage in Xcode**: Same as iOS, drag and drop into your project
+1. Drag `libv8_monolith.xcframework` into your project.
+2. Add it to "Frameworks, Libraries, and Embedded Content".
+3. Import headers with `#include <libv8_monolith/v8.h>`.
+4. Xcode selects the matching platform slice.
 
 ### Windows
-- [args.win.x64.gn](args.win.x64.gn)
+
+- [args.win.x64.release.gn](args.win.x64.release.gn) - Release
+- [args.win.x64.debug.gn](args.win.x64.debug.gn) - Debug
 
 ### XCFramework Configuration
 - [Info.plist.template](Info.plist.template) - Template for XCFramework Info.plist (version is replaced during build)
@@ -102,9 +84,10 @@ libv8_monolith.xcframework/
 
 - ✅ Automated builds via GitHub Actions
 - ✅ Consistent configuration across platforms
-- ✅ Pre-build scripts for platform-specific optimizations ([builder.js](builder.js))
+- ✅ Source version validation before building ([builder.js](builder.js))
 - ✅ Full build argument traceability
-- ✅ iOS WebAssembly support enabled
+- ✅ One Apple XCFramework with platform-specific headers
+- ✅ Windows Release and Debug packages
 
 ## Usage
 
@@ -118,9 +101,13 @@ libv8_monolith.xcframework/
 
 All builds are automated using [GitHub Actions](.github/workflows/main.yml):
 - Clean build environment for each platform
-- Consistent depot_tools version
+- Source and dependencies pinned to the same V8 tag
 - Reproducible builds
 - Automated release creation
+
+Android uses the NDK and Clang pinned by V8's `DEPS`; a separate NDK installation is not required. After dependency sync, CI installs the amd64 host sysroot and the i386 sysroot/runtime needed by ARM snapshot generation. Dependency installation failures stop the build.
+
+All platforms check `include/v8-version.h` before building and reject unused GN arguments. Platform settings are declared in the GN files without modifying V8 sources. Windows CI installs SDK `10.0.28000.0`, as required by this V8 version.
 
 ## V8 Documentation
 

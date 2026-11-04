@@ -5,8 +5,11 @@ on:
       - 'v*'
 
 env:
-  V8_VERSION: "14.3.127.5"
+  V8_VERSION: "15.7.112.23"
   DEPOT_TOOLS_REPO: "https://chromium.googlesource.com/chromium/tools/depot_tools.git"
+
+permissions:
+  contents: write
 
 defaults:
   run:
@@ -66,7 +69,6 @@ jobs:
             return release.data;
 
   build-android:
-    if: false
     name: android
     env:
       JOB_NAME: android
@@ -78,49 +80,22 @@ jobs:
         platform: [arm64, arm, x64]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           
-      - name: Install NDK r28b
-        uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r28b
-          add-to-path: false
-          local-cache: true
-
-      - name: compile v8
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          JOB_NAME: ${{ env.JOB_NAME }}
-          WORKSPACE: ${{ github.workspace }}
+      - name: Prepare Android build environment
         run: |
-          # Set NDK_ROOT from the setup-ndk action output
-          export NDK_ROOT="${{ steps.setup-ndk.outputs.ndk-path }}"
-          echo "NDK_ROOT from action: ${NDK_ROOT}"
-          
-          # Verify NDK installation
-          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
-            echo "Error: NDK not found or NDK_ROOT is empty"
-            echo "NDK_ROOT = ${NDK_ROOT}"
-            exit 1
-          fi
-          
-          echo "NDK installed successfully at: ${NDK_ROOT}"
-          ls -la "${NDK_ROOT}"
-  
           echo "::group::Prepare v8 build environment"
-          git clone $DEPOT_TOOLS_REPO > /dev/null
+          git clone "$DEPOT_TOOLS_REPO"
           export PATH="$GITHUB_WORKSPACE/depot_tools:${PATH}"
-          gclient
-          fetch v8 > /dev/null
+          git clone --depth 1 --branch "$V8_VERSION" https://chromium.googlesource.com/v8/v8.git v8
           cd ${{ github.workspace }}/v8
           
           echo "Checkout v8 version: $V8_VERSION"
-          git checkout $V8_VERSION
+          git describe --tags --exact-match
           
           cat > ${{ github.workspace }}/.gclient << 'EOF'
           solutions = [
@@ -139,27 +114,33 @@ jobs:
           target_os = ['android']
           EOF
 
-          echo "Install sysroot"
-          if [[ "${{ matrix.platform }}" == "arm64" || "${{ matrix.platform }}" == "x64" ]];then
-            INSTALL_SYSROOT_ARCH="amd64"
-          else
-            INSTALL_SYSROOT_ARCH="i386"
-          fi
-          python3 ./build/linux/sysroot_scripts/install-sysroot.py --arch=${INSTALL_SYSROOT_ARCH}
+          echo "Running version-pinned gclient sync without hooks..."
+          gclient sync --nohooks -D --force --reset --shallow --no-history --revision "v8@refs/tags/$V8_VERSION"
+          ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts --android
 
-          echo "Running gclient sync with dependencies..."
-          gclient sync -D --force --reset
-          ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts || true
+          # Host tools always need amd64; ARM mksnapshot also runs as i386.
+          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
+          if [[ "${{ matrix.platform }}" == "arm" ]]; then
+            python3 build/linux/sysroot_scripts/install-sysroot.py --arch=i386
+            sudo apt-get install -y libatomic1:i386
+          fi
+          gclient runhooks
           echo "::endgroup::"
+      - name: Compile Android static library
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          export PATH="$GITHUB_WORKSPACE/depot_tools:${PATH}"
+          cd "$GITHUB_WORKSPACE/v8"
           echo "::group::Run pre-build script"
           node ${{ github.workspace }}/builder.js
-          echo "NDK_ROOT=${NDK_ROOT}"
           echo "::endgroup::"
           echo "::group::Compile v8 static library"
           mkdir -p out.gn/android.${{ matrix.platform }}.release/
           cp ${{ github.workspace }}/args.android.${{ matrix.platform }}.gn ${{ github.workspace }}/v8/out.gn/android.${{ matrix.platform }}.release/args.gn
-          gn gen out.gn/android.${{ matrix.platform }}.release
-          ninja v8_monolith -C out.gn/android.${{ matrix.platform }}.release/
+          gn gen --fail-on-unused-args out.gn/android.${{ matrix.platform }}.release
+          ninja -j 2 v8_monolith -C out.gn/android.${{ matrix.platform }}.release/
           gn args --list out.gn/android.${{ matrix.platform }}.release > out.gn/android.${{ matrix.platform }}.release/args.full.txt
           echo "::endgroup::"
           echo "::group::Compress artifacts"
@@ -193,7 +174,6 @@ jobs:
           asset_content_type: application/zip
 
   build-apple:
-    if: true
     name: apple
     env:
       JOB_NAME: apple
@@ -201,22 +181,21 @@ jobs:
     runs-on: macos-26
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Prepare v8 environment
         run: |
           echo "::group::Prepare v8 build environment"
-          git clone $DEPOT_TOOLS_REPO > /dev/null
+          git clone "$DEPOT_TOOLS_REPO"
           export PATH="$GITHUB_WORKSPACE/depot_tools:${PATH}"
-          gclient
-          fetch v8 > /dev/null
+          git clone --depth 1 --branch "$V8_VERSION" https://chromium.googlesource.com/v8/v8.git v8
           cd ${{ github.workspace }}/v8
 
           echo "Checkout v8 version: $V8_VERSION"
-          git checkout $V8_VERSION
+          git describe --tags --exact-match
 
           cat > ${{ github.workspace }}/.gclient << 'EOF'
           solutions = [
@@ -236,7 +215,7 @@ jobs:
           EOF
 
           echo "Running gclient sync with dependencies..."
-          gclient sync -D --force --reset
+          gclient sync -D --force --reset --shallow --no-history --revision "v8@refs/tags/$V8_VERSION"
           echo "::endgroup::"
       - name: Build iOS arm64 (device)
         env:
@@ -252,7 +231,7 @@ jobs:
           echo "::group::Compile v8 static library for iOS arm64 (device)"
           mkdir -p out.gn/ios.arm64.release/
           cp ${{ github.workspace }}/args.ios.arm64.gn out.gn/ios.arm64.release/args.gn
-          gn gen out.gn/ios.arm64.release
+          gn gen --fail-on-unused-args out.gn/ios.arm64.release
           ninja v8_monolith -C out.gn/ios.arm64.release/
           gn args --list out.gn/ios.arm64.release > out.gn/ios.arm64.release/args.full.txt
           echo "::endgroup::"
@@ -270,7 +249,7 @@ jobs:
           echo "::group::Compile v8 static library for iOS arm64 (simulator)"
           mkdir -p out.gn/ios.arm64.simulator.release/
           cp ${{ github.workspace }}/args.ios.arm64.simulator.gn out.gn/ios.arm64.simulator.release/args.gn
-          gn gen out.gn/ios.arm64.simulator.release
+          gn gen --fail-on-unused-args out.gn/ios.arm64.simulator.release
           ninja v8_monolith -C out.gn/ios.arm64.simulator.release/
           gn args --list out.gn/ios.arm64.simulator.release > out.gn/ios.arm64.simulator.release/args.full.txt
           echo "::endgroup::"
@@ -288,7 +267,7 @@ jobs:
           echo "::group::Compile v8 static library for macOS arm64"
           mkdir -p out.gn/mac.arm64.release/
           cp ${{ github.workspace }}/args.mac.arm64.gn out.gn/mac.arm64.release/args.gn
-          gn gen out.gn/mac.arm64.release
+          gn gen --fail-on-unused-args out.gn/mac.arm64.release
           ninja v8_monolith -C out.gn/mac.arm64.release/
           gn args --list out.gn/mac.arm64.release > out.gn/mac.arm64.release/args.full.txt
           echo "::endgroup::"
@@ -366,11 +345,31 @@ jobs:
         build_type: [release, debug]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+      - name: Install Windows SDK 10.0.28000.0
+        shell: pwsh
+        run: |
+          $sdkRoot = "${env:ProgramFiles(x86)}\Windows Kits\10"
+          $header = "$sdkRoot\Include\10.0.28000.0\um\Windows.h"
+          $library = "$sdkRoot\Lib\10.0.28000.0\um\x64\kernel32.lib"
+          $debugger = "$sdkRoot\Debuggers\x64\cdb.exe"
+          if (!(Test-Path $header) -or !(Test-Path $library) -or !(Test-Path $debugger)) {
+            # V8's pinned build/vs_toolchain.py requires this SDK, absent from the runner.
+            $installer = Join-Path $env:RUNNER_TEMP "winsdksetup.exe"
+            Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/?linkid=2370315" -OutFile $installer
+            $arguments = "/quiet /norestart /ceip off /features OptionId.DesktopCPPx64 OptionId.DesktopCPPx86 OptionId.WindowsDesktopDebuggers"
+            $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 3010)) {
+              throw "Windows SDK installation failed: $($process.ExitCode)"
+            }
+          }
+          if (!(Test-Path $header) -or !(Test-Path $library) -or !(Test-Path $debugger)) {
+            throw "Windows SDK 10.0.28000.0 is incomplete"
+          }
       - name: setup env
         shell: pwsh
         run: |
@@ -380,13 +379,13 @@ jobs:
         run: |
           echo "::group::Prepare v8 build environment"
           git config --global depot-tools.allowGlobalGitConfig true
-          git clone $DEPOT_TOOLS_REPO > NUL
-          gclient
-          fetch v8
+          git config --global core.longpaths true
+          git clone "$DEPOT_TOOLS_REPO"
+          git clone --depth 1 --branch "$V8_VERSION" https://chromium.googlesource.com/v8/v8.git v8
           cd v8
           
-          echo "Checkout v8 version: %V8_VERSION%"
-          git checkout $V8_VERSION
+          echo "Checkout v8 version: $V8_VERSION"
+          git describe --tags --exact-match
           
           cat > ../.gclient << 'EOF'
           solutions = [
@@ -405,7 +404,7 @@ jobs:
           EOF
           
           echo "Running gclient sync with dependencies..."
-          gclient sync -D --force --reset
+          gclient sync -D --force --reset --shallow --no-history --revision "v8@refs/tags/$V8_VERSION"
           echo "::endgroup::"
       - name: run pre-build script
         env:
@@ -424,9 +423,12 @@ jobs:
           New-Item -ItemType directory -Path v8/out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/
           Copy-Item "args.win.${{ matrix.platform }}.${{ matrix.build_type }}.gn" -Destination "v8/out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/args.gn" -force
           Set-Location -Path v8
-          gn gen out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}
+          gn gen --fail-on-unused-args out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ninja v8_monolith -C out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gn args --list out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }} > out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/args.full.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           echo "::endgroup::"
       - name: compress artifacts
         shell: pwsh
@@ -463,7 +465,7 @@ jobs:
 
   publish-release:
     name: publish release
-    needs: [build-apple, build-win]
+    needs: [build-android, build-apple, build-win]
     runs-on: ubuntu-latest
     steps:
     - name: Publish Release
