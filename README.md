@@ -105,7 +105,7 @@ All builds are automated using [GitHub Actions](.github/workflows/main.yml):
 - Reproducible builds
 - Automated release creation
 
-Android uses the NDK and Clang pinned by V8's `DEPS`; a separate NDK installation is not required. After dependency sync, CI installs the amd64 host sysroot and the i386 sysroot/runtime needed by ARM snapshot generation. Dependency installation failures stop the build.
+Android uses the NDK and Clang pinned by V8's `DEPS`; a separate NDK installation is not required. After dependency sync and hooks complete, CI installs and checks the amd64 host sysroot immediately before GN generation, plus the i386 sysroot/runtime needed by ARM snapshot generation. Missing headers or startup libraries stop the build and report their absolute paths.
 
 All platforms check `include/v8-version.h` before building and reject unused GN arguments. Platform settings are declared in the GN files without modifying V8 sources. Windows CI installs SDK `10.0.28000.0`, as required by this V8 version.
 

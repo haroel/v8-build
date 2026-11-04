@@ -118,10 +118,7 @@ jobs:
           gclient sync --nohooks -D --force --reset --shallow --no-history --revision "v8@refs/tags/$V8_VERSION"
           ./build/install-build-deps.sh --no-prompt --no-chromeos-fonts --android
 
-          # Host tools always need amd64; ARM mksnapshot also runs as i386.
-          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
           if [[ "${{ matrix.platform }}" == "arm" ]]; then
-            python3 build/linux/sysroot_scripts/install-sysroot.py --arch=i386
             sudo apt-get install -y libatomic1:i386
           fi
           gclient runhooks
@@ -139,6 +136,24 @@ jobs:
           echo "::group::Compile v8 static library"
           mkdir -p out.gn/android.${{ matrix.platform }}.release/
           cp ${{ github.workspace }}/args.android.${{ matrix.platform }}.gn ${{ github.workspace }}/v8/out.gn/android.${{ matrix.platform }}.release/args.gn
+          # Install after all sync/hooks, at the point where GN needs these host sysroots.
+          install_host_sysroot() {
+            local arch="$1"
+            local triplet="$2"
+            local sysroot="$GITHUB_WORKSPACE/v8/build/linux/debian_bullseye_${arch}-sysroot"
+            python3 "$GITHUB_WORKSPACE/v8/build/linux/sysroot_scripts/install-sysroot.py" --arch="$arch"
+            for required_file in usr/include/features.h "usr/lib/$triplet/crt1.o" "usr/lib/$triplet/libc.so"; do
+              if [[ ! -f "$sysroot/$required_file" ]]; then
+                echo "::error::Incomplete $arch host sysroot: $sysroot/$required_file"
+                exit 1
+              fi
+            done
+            echo "Verified $arch host sysroot: $sysroot"
+          }
+          install_host_sysroot amd64 x86_64-linux-gnu
+          if [[ "${{ matrix.platform }}" == "arm" ]]; then
+            install_host_sysroot i386 i386-linux-gnu
+          fi
           gn gen --fail-on-unused-args out.gn/android.${{ matrix.platform }}.release
           ninja -j 2 v8_monolith -C out.gn/android.${{ matrix.platform }}.release/
           gn args --list out.gn/android.${{ matrix.platform }}.release > out.gn/android.${{ matrix.platform }}.release/args.full.txt

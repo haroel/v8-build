@@ -105,7 +105,7 @@ libv8_monolith.xcframework/
 - 可重现的构建过程
 - 自动创建发布版本
 
-Android 使用 V8 `DEPS` 固定的 NDK 和 Clang，不需要单独安装 NDK。同步依赖后，CI 安装 amd64 主机 sysroot，以及 ARM 快照生成所需的 i386 sysroot 和运行库。依赖安装失败时会立即停止构建。
+Android 使用 V8 `DEPS` 固定的 NDK 和 Clang，不需要单独安装 NDK。同步依赖和 hooks 完成后，CI 在生成 GN 构建文件前安装并检查 amd64 主机 sysroot，以及 ARM 快照生成所需的 i386 sysroot 和运行库。缺少头文件或启动库时会立即停止构建，并报告对应的绝对路径。
 
 所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。
 
