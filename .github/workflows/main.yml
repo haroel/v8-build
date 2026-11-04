@@ -7,6 +7,9 @@ on:
 env:
   V8_VERSION: "15.7.112.23"
   ANDROID_TEST_API: "23"
+  # Match the NDK runtime pinned by this V8 version's DEPS, independent of the
+  # runner image's changing ANDROID_NDK_LATEST_HOME.
+  ANDROID_TEST_NDK_VERSION: "30.0.16248370"
   DEPOT_TOOLS_REPO: "https://chromium.googlesource.com/chromium/tools/depot_tools.git"
 
 permissions:
@@ -41,6 +44,8 @@ jobs:
               '- Static library: `libv8_monolith-android-{arch}.zip`',
               '- Header files: `include-android.zip`',
               '- Each package includes: static library + args.gn + args.full.txt',
+              '- 64-bit compatibility gates: 16 KB ELF alignment and a 16 KB emulator smoke test',
+              '- Link the final application shared libraries with 16 KB alignment; package with AGP 8.5.1+',
               '',
               '### Windows (x64)',
               '- Static library: `libv8_monolith-win-x64-release.zip` (Release)',
@@ -163,7 +168,19 @@ jobs:
           fi
           ls -a
           echo "::endgroup::"
-      - name: Link and inspect Android 6.0 smoke executable
+      - name: Select matching Android test NDK
+        run: |
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk_root"
+          ndk_root="$sdk_root/ndk/$ANDROID_TEST_NDK_VERSION"
+          if [[ ! -f "$ndk_root/source.properties" ]]; then
+            sdkmanager --install "ndk;$ANDROID_TEST_NDK_VERSION"
+          fi
+          ndk_revision="$(sed -n 's/^Pkg.Revision[[:space:]]*=[[:space:]]*//p' "$ndk_root/source.properties")"
+          test "$ndk_revision" = "$ANDROID_TEST_NDK_VERSION"
+          echo "V8_TEST_NDK=$ndk_root" >> "$GITHUB_ENV"
+          cat "$ndk_root/source.properties"
+      - name: Link and inspect Android 6.0 and 16 KB compatibility
         run: |
           artifact_root="$RUNNER_TEMP/v8-smoke-artifacts"
           v8_out="$GITHUB_WORKSPACE/v8/out.gn/android.${{ matrix.platform }}.release"
@@ -172,7 +189,7 @@ jobs:
           cp "$v8_out/obj/libv8_monolith.a" "$v8_out/args.gn" "$v8_out/args.full.txt" "$artifact_root/${{ matrix.platform }}/"
           python3 tests/android/run_smoke.py \
             --artifacts "$artifact_root" \
-            --ndk "$ANDROID_NDK_LATEST_HOME" \
+            --ndk "$V8_TEST_NDK" \
             --runtime-ndk "$GITHUB_WORKSPACE/v8/third_party/android_toolchain/ndk" \
             --arch "${{ matrix.platform }}" --api "$ANDROID_TEST_API" --build-only
       - name: Enable KVM for Android 6.0 emulator
@@ -189,17 +206,35 @@ jobs:
           api-level: ${{ env.ANDROID_TEST_API }}
           target: default
           arch: x86_64
+          avd-name: v8-api23
+          emulator-port: 5554
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
           script: |
             test "$(adb -s "emulator-$EMULATOR_PORT" shell getprop ro.build.version.sdk | tr -d '\r')" = "$ANDROID_TEST_API"
-            python3 tests/android/run_smoke.py --artifacts "$RUNNER_TEMP/v8-smoke-artifacts" --ndk "$ANDROID_NDK_LATEST_HOME" --runtime-ndk "$GITHUB_WORKSPACE/v8/third_party/android_toolchain/ndk" --arch x64 --api "$ANDROID_TEST_API" --serial "emulator-$EMULATOR_PORT"
+            python3 tests/android/run_smoke.py --artifacts "$RUNNER_TEMP/v8-smoke-artifacts" --ndk "$V8_TEST_NDK" --runtime-ndk "$GITHUB_WORKSPACE/v8/third_party/android_toolchain/ndk" --arch x64 --api "$ANDROID_TEST_API" --serial "emulator-$EMULATOR_PORT" --page-size 4096
+      - name: Run smoke test on Android 16 KB pages
+        if: matrix.platform == 'x64'
+        timeout-minutes: 25
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis_ps16k
+          arch: x86_64
+          avd-name: v8-16k
+          emulator-port: 5556
+          ram-size: 4096M
+          disk-size: 4G
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: |
+            python3 tests/android/run_smoke.py --artifacts "$RUNNER_TEMP/v8-smoke-artifacts" --ndk "$V8_TEST_NDK" --runtime-ndk "$GITHUB_WORKSPACE/v8/third_party/android_toolchain/ndk" --arch x64 --api "$ANDROID_TEST_API" --serial "emulator-$EMULATOR_PORT" --page-size 16384 --output build/android-smoke/x64-16k
       - name: Upload Android compatibility logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-api23-${{ matrix.platform }}
-          path: build/android-smoke/${{ matrix.platform }}/smoke.log
+          name: android-compatibility-${{ matrix.platform }}
+          path: build/android-smoke/**/smoke.log
           if-no-files-found: ignore
       - name: Upload static library
         uses: actions/upload-release-asset@v1

@@ -108,7 +108,9 @@ libv8_monolith.xcframework/
 - 可重现的构建过程
 - 自动创建发布版本
 
-Android 使用 V8 `DEPS` 固定的 NDK 和 Clang，不需要单独安装 NDK。同步依赖和 hooks 完成后，CI 在生成 GN 构建文件前安装并检查 amd64 主机 sysroot，以及 ARM 快照生成所需的 i386 sysroot 和运行库。缺少头文件或启动库时会立即停止构建，并报告对应的绝对路径。 三个架构均显式使用 API 23 编译，启用 API 29 之前的 emulated TLS 路径。CI 在上传前按 API 23 系统库链接测试程序并检查不存在原生 ELF TLS；x64 还会在 Android 6.0 模拟器运行全部 14 项检查。兼容性测试失败会阻止发布。此前按 API 29 构建的 `15.7.112.23` 产物必须重新编译，仅降低应用 manifest 版本不够。参见 [Android 冒烟测试](tests/android/README.md)。
+Android 使用 V8 `DEPS` 固定的 NDK **30.0.16248370** 和 Clang，CI 冒烟测试也固定使用该 NDK 版本。同步依赖和 hooks 完成后，CI 在生成 GN 构建文件前安装并检查 amd64 主机 sysroot，以及 ARM 快照生成所需的 i386 sysroot 和运行库。缺少头文件或启动库时会立即停止构建，并报告对应的绝对路径。三个架构均显式使用 API 23 编译，启用 API 29 之前的 emulated TLS 路径。CI 在上传前按 API 23 系统库链接测试程序并检查不存在原生 ELF TLS；x64 还会在 Android 6.0 模拟器运行全部 14 项检查。此前按 API 29 构建的 `15.7.112.23` 产物必须重新编译，仅降低应用 manifest 版本不够。
+
+64 位产物同时考虑 Android 6.0 和 16KB 页支持。CI 检查测试程序及匹配的 C++ 运行库的 ELF LOAD 对齐，并在 16KB 页模拟器运行 x64 冒烟测试，任一兼容性检查失败均阻止发布。应用最终 `.so` 的链接及 APK/AAB 打包也必须支持 16KB：使用 NDK r28+、AGP 8.5.1+，并确保所有原生依赖兼容。具体检查和接入要求见 [Android 冒烟测试](tests/android/README.md)。
 
 所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。Windows 两种配置均使用上游 Torque 生成路径（`v8_use_metagen=false`），避开 Metagen 对 MSVC 标准库下 `ExtendedMap` 尾部填充的检查失败。
 

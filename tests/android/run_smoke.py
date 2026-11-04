@@ -151,7 +151,9 @@ def ndk_readelf(ndk: Path) -> Path:
     raise RuntimeError(f"No {name} under compiler NDK {ndk}")
 
 
-def check_elf_tls(log: CommandLog, readelf: Path, path: Path, api: int) -> None:
+def check_elf_compatibility(
+    log: CommandLog, readelf: Path, path: Path, api: int, page_size: int
+) -> None:
     result = log.run([str(readelf), "--program-headers", "--wide", str(path)])
     native_tls = bool(re.search(r"^\s*(?:PT_)?TLS\s+", result.stdout, re.MULTILINE))
     log.write(
@@ -163,6 +165,28 @@ def check_elf_tls(log: CommandLog, readelf: Path, path: Path, api: int) -> None:
             f"{path} contains native ELF TLS (PT_TLS), which requires Android "
             f"API 29; rebuild with emulated TLS for API {api}"
         )
+    loads = [line.split() for line in result.stdout.splitlines()
+             if re.match(r"^\s*(?:PT_)?LOAD\s+", line)]
+    if not loads:
+        raise RuntimeError(f"No ELF LOAD segments found in {path}")
+    for fields in loads:
+        try:
+            offset, address, alignment = (
+                int(fields[1], 0), int(fields[2], 0), int(fields[-1], 0)
+            )
+        except (IndexError, ValueError) as error:
+            raise RuntimeError(f"Malformed ELF LOAD segment in {path}: {fields}") from error
+        if (alignment < page_size or alignment & (alignment - 1)
+                or (address - offset) % alignment):
+            raise RuntimeError(
+                f"{path} has an incompatible ELF LOAD segment: offset={offset:#x}, "
+                f"address={address:#x}, alignment={alignment:#x}; "
+                f"requires at least {page_size}-byte page alignment"
+            )
+    log.write(
+        f"ELF LOAD alignment verified: {path}; {len(loads)} segments; "
+        f"at least {page_size} bytes"
+    )
 
 
 def ndk_runtime(ndk: Path, arch: str) -> Path:
@@ -248,7 +272,8 @@ def run_remote_smoke(
 
 
 def run_on_device(
-    log: CommandLog, binary: Path, runtime: Path, arch: str, api: int, serial: str | None
+    log: CommandLog, binary: Path, runtime: Path, arch: str, api: int,
+    serial: str | None, expected_page_size: int | None = None
 ) -> None:
     adb = device_command(log, serial)
     device_abi = ARCHITECTURES[arch][2]
@@ -260,6 +285,15 @@ def run_on_device(
     sdk = log.run(adb + ["shell", "getprop", "ro.build.version.sdk"]).stdout.strip()
     if not sdk.isdigit() or int(sdk) < api:
         raise RuntimeError(f"Device API {sdk!r} is below the test's API {api}")
+    page_size = log.run(adb + ["shell", "getconf", "PAGE_SIZE"]).stdout.strip()
+    if not page_size.isdigit():
+        raise RuntimeError(f"Cannot determine device page size: {page_size!r}")
+    log.write(f"Device page size: {page_size} bytes")
+    if expected_page_size is not None and int(page_size) != expected_page_size:
+        raise RuntimeError(
+            f"Device page size is {page_size}, expected {expected_page_size}; "
+            "use a system image with the required page size"
+        )
 
     remote = f"/data/local/tmp/v8-smoke-{arch}-{os.getpid()}-{secrets.token_hex(4)}"
     if not re.fullmatch(r"/data/local/tmp/v8-smoke-(arm64|arm|x64)-\d+-[0-9a-f]{8}", remote):
@@ -306,6 +340,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--api", type=int, default=MINIMUM_API, help="Android target API, at least 23 / Android 6.0 (default: 23; must meet the artifact's API floor)")
     parser.add_argument("--output", type=Path, help="Build/log directory (default: build/android-smoke/<arch>)")
     parser.add_argument("--serial", help="adb device serial; required when multiple devices are connected")
+    parser.add_argument("--page-size", type=int, choices=(4096, 16384), help="Require this device page size before running (bytes)")
     parser.add_argument("--build-only", action="store_true", help="Build without querying or modifying any device")
     args = parser.parse_args()
     if args.api < MINIMUM_API:
@@ -341,7 +376,11 @@ def main() -> int:
         shared_runtime = ndk_runtime(runtime_ndk, args.arch)
         runtime = output / "libc++_shared.so"
         if shared_runtime.resolve() != runtime.resolve():
-            shutil.copy2(shared_runtime, runtime)
+            # Chromium's repack can mark its files read-only. Do not preserve
+            # that mode in this run's output or a second smoke run cannot
+            # replace the previously copied runtime.
+            runtime.unlink(missing_ok=True)
+            shutil.copyfile(shared_runtime, runtime)
         binary = output / "v8_smoke"
         log.write(f"NDK: {ndk}")
         log.write(f"Runtime NDK: {runtime_ndk}")
@@ -358,11 +397,14 @@ def main() -> int:
             "-o", str(binary),
         ]
         log.run(command)
-        check_elf_tls(log, readelf, binary, args.api)
-        check_elf_tls(log, readelf, runtime, args.api)
+        # Android's 16 KiB requirement applies to 64-bit ABIs. The 32-bit NDK
+        # runtime continues to use 4 KiB segments and is tested separately.
+        elf_page_size = 4096 if args.arch == "arm" else 16384
+        check_elf_compatibility(log, readelf, binary, args.api, elf_page_size)
+        check_elf_compatibility(log, readelf, runtime, args.api, elf_page_size)
         log.write(f"Built: {binary}")
         if not args.build_only:
-            run_on_device(log, binary, runtime, args.arch, args.api, args.serial)
+            run_on_device(log, binary, runtime, args.arch, args.api, args.serial, args.page_size)
         log.write(f"Log: {log.path}")
         return 0
     except CommandFailed as error:
