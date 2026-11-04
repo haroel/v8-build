@@ -519,13 +519,48 @@ jobs:
         shell: pwsh
         run: |
           echo "::group::Compress artifacts"
-          Compress-Archive -Path @(
-            "${{ github.workspace }}/v8/out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/obj/v8_monolith.lib",
-            "${{ github.workspace }}/v8/out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/args.gn",
-            "${{ github.workspace }}/v8/out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}/args.full.txt"
-          ) -Destination ${{ github.workspace }}/libv8_monolith-${{ env.JOB_NAME }}-${{ matrix.platform }}-${{ matrix.build_type }}.zip
+          # Compress-Archive cannot handle the Debug library's >2 GB input.
+          # The runner's 7-Zip streams large files and writes ZIP64 as needed.
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip/7z.exe"
+          if (!(Test-Path -LiteralPath $sevenZip -PathType Leaf)) {
+            $sevenZip = (Get-Command 7z -CommandType Application -ErrorAction Stop).Source
+          }
+          function New-ReleaseZip {
+            param([string]$Archive, [string[]]$SourcePaths)
+            foreach ($sourcePath in $SourcePaths) {
+              if (!(Test-Path -LiteralPath $sourcePath)) {
+                throw "Missing archive input: $sourcePath"
+              }
+            }
+            if (Test-Path -LiteralPath $Archive) {
+              Remove-Item -LiteralPath $Archive -Force
+            }
+            # Absolute file inputs retain flat names; directory inputs retain
+            # their root name, preserving include/ in the header package.
+            & $sevenZip a -tzip -mm=Deflate -mx=5 -mmt=2 -bd $Archive @SourcePaths
+            if ($LASTEXITCODE -ne 0) { throw "7-Zip creation failed with exit $LASTEXITCODE" }
+            & $sevenZip t -bd $Archive
+            if ($LASTEXITCODE -ne 0) { throw "7-Zip integrity check failed with exit $LASTEXITCODE" }
+            $archiveBytes = (Get-Item -LiteralPath $Archive).Length
+            Write-Host "Archive: $Archive ($archiveBytes bytes)"
+            # This limit applies to the compressed upload, not the input .lib.
+            if ($archiveBytes -ge 2GB) {
+              throw "GitHub Release assets must be smaller than 2 GiB: $Archive"
+            }
+          }
+          $outputDir = Join-Path $env:GITHUB_WORKSPACE "v8/out.gn/win.${{ matrix.platform }}.${{ matrix.build_type }}"
+          $library = Join-Path $outputDir "obj/v8_monolith.lib"
+          Write-Host "Static library: $library ($((Get-Item -LiteralPath $library).Length) bytes)"
+          $archive = Join-Path $env:GITHUB_WORKSPACE "libv8_monolith-${{ env.JOB_NAME }}-${{ matrix.platform }}-${{ matrix.build_type }}.zip"
+          New-ReleaseZip -Archive $archive -SourcePaths @(
+            $library,
+            (Join-Path $outputDir "args.gn"),
+            (Join-Path $outputDir "args.full.txt")
+          )
           if ("${{ matrix.platform }}" -eq "x64" -and "${{ matrix.build_type }}" -eq "release") {
-            Compress-Archive -Path ${{ github.workspace }}/v8/include -Destination ${{ github.workspace }}/include-${{ env.JOB_NAME }}.zip
+            New-ReleaseZip -Archive (Join-Path $env:GITHUB_WORKSPACE "include-${{ env.JOB_NAME }}.zip") -SourcePaths @(
+              (Join-Path $env:GITHUB_WORKSPACE "v8/include")
+            )
           }
           echo "::endgroup::"
       - name: Upload static library

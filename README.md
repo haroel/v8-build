@@ -112,7 +112,7 @@ Android uses the NDK **30.0.16248370** and Clang pinned by V8's `DEPS`; CI also 
 
 The 64-bit artifacts support 16 KiB alignment alongside Android 6.0. CI checks the executable and matching C++ runtime's ELF load alignment, then runs the x64 smoke test in a 16 KiB-page emulator. A failed compatibility test blocks publication. Final application `.so` linking and APK/AAB packaging must also support 16 KiB pages; use NDK r28+ and AGP 8.5.1+ with compatible native dependencies. See [Android smoke tests](tests/android/README.md) for checks and integration requirements.
 
-All platforms check `include/v8-version.h` before building and reject unused GN arguments. Platform settings are declared in the GN files without modifying V8 sources. Windows CI installs SDK `10.0.28000.0`, as required by this V8 version. Both Windows configurations use the upstream Torque generator (`v8_use_metagen=false`) because Metagen rejects `ExtendedMap` tail padding with the MSVC standard library.
+All platforms check `include/v8-version.h` before building and reject unused GN arguments. Platform settings are declared in the GN files without modifying V8 sources. Windows CI installs SDK `10.0.28000.0`, as required by this V8 version. Both Windows configurations use the upstream Torque generator (`v8_use_metagen=false`) because Metagen rejects `ExtendedMap` tail padding with the MSVC standard library. Windows packages use 7-Zip with ZIP64 support for libraries larger than 2 GB, verify archive integrity, and check the compressed asset is below GitHub's 2 GiB upload limit.
 
 ## V8 Documentation
 

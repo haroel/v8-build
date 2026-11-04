@@ -112,7 +112,7 @@ Android 使用 V8 `DEPS` 固定的 NDK **30.0.16248370** 和 Clang，CI 冒烟�
 
 64 位产物同时考虑 Android 6.0 和 16KB 页支持。CI 检查测试程序及匹配的 C++ 运行库的 ELF LOAD 对齐，并在 16KB 页模拟器运行 x64 冒烟测试，任一兼容性检查失败均阻止发布。应用最终 `.so` 的链接及 APK/AAB 打包也必须支持 16KB：使用 NDK r28+、AGP 8.5.1+，并确保所有原生依赖兼容。具体检查和接入要求见 [Android 冒烟测试](tests/android/README.md)。
 
-所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。Windows 两种配置均使用上游 Torque 生成路径（`v8_use_metagen=false`），避开 Metagen 对 MSVC 标准库下 `ExtendedMap` 尾部填充的检查失败。
+所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。Windows 两种配置均使用上游 Torque 生成路径（`v8_use_metagen=false`），避开 Metagen 对 MSVC 标准库下 `ExtendedMap` 尾部填充的检查失败。Windows 使用支持 ZIP64 的 7-Zip 打包超过 2GB 的静态库，校验压缩包完整性，并检查压缩后的文件小于 GitHub 的 2GiB 上传限制。
 
 ## V8 文档
 
