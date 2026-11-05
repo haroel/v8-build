@@ -11,8 +11,8 @@
 ## 支持平台
 
 - **Android** (arm64, arm, x64；构建目标为 Android 6.0 / API 23)
-- **iOS** (XCFramework: arm64 真机、arm64 模拟器；CI 暂时关闭)
-- **macOS** (XCFramework: arm64 Apple Silicon；CI 暂时关闭)
+- **iOS** (XCFramework: arm64 真机、arm64 模拟器)
+- **macOS** (XCFramework: arm64 Apple Silicon)
 - **Windows** (x64，Release + Debug)
 
 ## 最新版本
@@ -28,7 +28,7 @@
 
 ## 构建产物
 
-当前发布包含 Android 和 Windows。Apple CI 暂时关闭，不参与构建或发布，也不阻塞发布流程。
+标签构建包含 Android、Apple 和 Windows。下表八个必需文件均非空且上传完成后，才允许公开发布。
 
 | 平台 | 产物文件 | 架构 | 说明 |
 |------|---------|------|------|
@@ -36,6 +36,7 @@
 | Android  | `libv8_monolith-android-arm.zip` | arm | 静态库 + args.gn + args.full.txt |
 | Android  | `libv8_monolith-android-x64.zip` | x64 | 静态库 + args.gn + args.full.txt |
 | Android  | `include-android.zip` | - | V8 头文件 |
+| Apple  | `libv8_monolith-apple.zip` | arm64 | XCFramework：iOS 真机、iOS 模拟器、macOS；头文件 + GN 参数 |
 | Windows  | `libv8_monolith-win-x64-release.zip` | x64 | Release 静态库 + args.gn + args.full.txt |
 | Windows  | `libv8_monolith-win-x64-debug.zip` | x64 | Debug 静态库 + args.gn + args.full.txt |
 | Windows  | `include-win.zip` | - | V8 头文件 |
@@ -51,7 +52,7 @@
 
 ### Apple（iOS + macOS）
 
-保留以下配置和打包说明，方便之后恢复 Apple CI；当前工作流不构建或发布该包。
+Apple CI 构建以下三个切片，并统一打包为一个 XCFramework。
 
 - [args.ios.arm64.gn](args.ios.arm64.gn) - iOS 真机
 - [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - iOS 模拟器
@@ -89,7 +90,7 @@ libv8_monolith.xcframework/
 - ✅ 跨平台统一配置
 - ✅ 编译前验证源码版本 ([builder.js](builder.js))
 - ✅ 完整的构建参数可追溯性
-- 保留 Apple XCFramework 配置（CI 暂时关闭）
+- ✅ Apple XCFramework：iOS 真机、iOS 模拟器和 macOS arm64
 - ✅ Windows 提供 Release 和 Debug 包
 
 ## 使用方法
@@ -112,7 +113,9 @@ Android 使用 V8 `DEPS` 固定的 NDK **30.0.16248370** 和 Clang，CI 冒烟�
 
 64 位产物同时考虑 Android 6.0 和 16KB 页支持。CI 检查测试程序及匹配的 C++ 运行库的 ELF LOAD 对齐，并在 16KB 页模拟器运行 x64 冒烟测试，任一兼容性检查失败均阻止发布。应用最终 `.so` 的链接及 APK/AAB 打包也必须支持 16KB：使用 NDK r28+、AGP 8.5.1+，并确保所有原生依赖兼容。具体检查和接入要求见 [Android 冒烟测试](tests/android/README.md)。
 
-Android x64 或 Windows Debug 任务失败时，可在 **Actions → build and publish v8 libs → Run workflow** 中选择 `main`，将 `target` 设为 `android-x64` 或 `windows-debug`，并填写已有草稿的 `release_tag`，只重新构建对应目标。重试会校验 `builder.js` 和 GN 输入一致，并拒绝覆盖已有产物；成功产物保留在原草稿中，七个必需文件均完整上传后才允许发布。
+Android x64、Windows Debug 或 Apple 任务失败时，可在 **Actions → build and publish v8 libs → Run workflow** 中选择 `main`，将 `target` 设为 `android-x64`、`windows-debug` 或 `apple`，并填写已有草稿的 `release_tag`，只重新构建对应目标。重试会校验 `builder.js` 和 GN 输入一致；完整产物直接复用，未完成的上传会被拒绝。八个必需文件均完整后，可用 `publish-only` 重试发布。
+
+定向重试会复用构建输入一致的已有草稿。本仓库已公开的不可变发布不能追加平台附件；如需增加其他平台，应创建新的版本标签并构建新发布。
 
 所有平台在编译前检查 `include/v8-version.h`，并拒绝无效的 GN 参数。各平台设置直接声明在 GN 文件中，不修改 V8 源码。Windows CI 会安装此 V8 版本要求的 SDK `10.0.28000.0`。Windows 两种配置均使用上游 Torque 生成路径（`v8_use_metagen=false`），避开 Metagen 对 MSVC 标准库下 `ExtendedMap` 尾部填充的检查失败。Windows 使用支持 ZIP64 的 7-Zip 打包超过 2GB 的静态库，校验压缩包完整性，并检查压缩后的文件小于 GitHub 的 2GiB 上传限制。
 

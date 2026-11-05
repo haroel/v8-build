@@ -11,8 +11,8 @@ English | [简体中文](README.ZH.md)
 ## Supported Platforms
 
 - **Android** (arm64, arm, x64; Android 6.0 / API 23 target)
-- **iOS** (XCFramework: arm64 device, arm64 simulator; CI temporarily disabled)
-- **macOS** (XCFramework: arm64 Apple Silicon; CI temporarily disabled)
+- **iOS** (XCFramework: arm64 device, arm64 simulator)
+- **macOS** (XCFramework: arm64 Apple Silicon)
 - **Windows** (x64, Release + Debug)
 
 ## Latest Release
@@ -28,7 +28,7 @@ Each release includes zip packages with:
 
 ## Build Artifacts
 
-Current releases include Android and Windows. Apple CI is temporarily disabled and does not block release publication.
+Tag builds include Android, Apple, and Windows. Publication requires all eight nonempty, fully uploaded artifacts below.
 
 | Platform | Artifact File | Architectures | Description |
 |----------|--------------|---------------|-------------|
@@ -36,6 +36,7 @@ Current releases include Android and Windows. Apple CI is temporarily disabled a
 | Android  | `libv8_monolith-android-arm.zip` | arm | Static library + args.gn + args.full.txt |
 | Android  | `libv8_monolith-android-x64.zip` | x64 | Static library + args.gn + args.full.txt |
 | Android  | `include-android.zip` | - | V8 header files |
+| Apple  | `libv8_monolith-apple.zip` | arm64 | XCFramework: iOS device, iOS simulator, macOS; headers + GN arguments |
 | Windows  | `libv8_monolith-win-x64-release.zip` | x64 | Release static library + args.gn + args.full.txt |
 | Windows  | `libv8_monolith-win-x64-debug.zip` | x64 | Debug static library + args.gn + args.full.txt |
 | Windows  | `include-win.zip` | - | V8 header files |
@@ -51,7 +52,7 @@ The repository contains GN build configuration files for each platform:
 
 ### Apple (iOS + macOS)
 
-Apple configuration and packaging instructions are retained for re-enabling CI later; the current workflow does not build or publish this package.
+Apple CI builds the three slices below and packages them together as an XCFramework.
 
 - [args.ios.arm64.gn](args.ios.arm64.gn) - iOS device
 - [args.ios.arm64.simulator.gn](args.ios.arm64.simulator.gn) - iOS simulator
@@ -89,7 +90,7 @@ To use in Xcode:
 - ✅ Consistent configuration across platforms
 - ✅ Source version validation before building ([builder.js](builder.js))
 - ✅ Full build argument traceability
-- Apple XCFramework configurations retained (CI temporarily disabled)
+- ✅ Apple XCFramework: iOS device, iOS simulator, and macOS arm64
 - ✅ Windows Release and Debug packages
 
 ## Usage
@@ -112,7 +113,9 @@ Android uses the NDK **30.0.16248370** and Clang pinned by V8's `DEPS`; CI also 
 
 The 64-bit artifacts support 16 KiB alignment alongside Android 6.0. CI checks the executable and matching C++ runtime's ELF load alignment, then runs the x64 smoke test in a 16 KiB-page emulator. A failed compatibility test blocks publication. Final application `.so` linking and APK/AAB packaging must also support 16 KiB pages; use NDK r28+ and AGP 8.5.1+ with compatible native dependencies. See [Android smoke tests](tests/android/README.md) for checks and integration requirements.
 
-For a failed Android x64 or Windows Debug job, use **Actions → build and publish v8 libs → Run workflow**, select `main`, set `target` to `android-x64` or `windows-debug`, and enter the existing draft's `release_tag`. Only that target rebuilds. Retries require matching `builder.js` and GN inputs and reject existing output assets; completed assets remain attached to the draft. Publication requires all seven nonempty platform assets.
+For a failed Android x64, Windows Debug, or Apple job, use **Actions → build and publish v8 libs → Run workflow**, select `main`, set `target` to `android-x64`, `windows-debug`, or `apple`, and enter the existing draft's `release_tag`. Only that target rebuilds. Retries require matching `builder.js` and GN inputs; complete assets are reused and incomplete uploads are rejected. Use `publish-only` to retry publication after all eight required assets are complete.
+
+Targeted retries reuse an existing draft with matching build inputs. Published release assets in this repository are immutable; adding another platform requires a new version tag and a new release.
 
 All platforms check `include/v8-version.h` before building and reject unused GN arguments. Platform settings are declared in the GN files without modifying V8 sources. Windows CI installs SDK `10.0.28000.0`, as required by this V8 version. Both Windows configurations use the upstream Torque generator (`v8_use_metagen=false`) because Metagen rejects `ExtendedMap` tail padding with the MSVC standard library. Windows packages use 7-Zip with ZIP64 support for libraries larger than 2 GB, verify archive integrity, and check the compressed asset is below GitHub's 2 GiB upload limit.
 

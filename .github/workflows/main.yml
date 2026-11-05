@@ -8,7 +8,7 @@ on:
       target:
         description: Build targets to retry, or publish a complete existing release
         type: choice
-        options: [all, android-x64, windows-debug, publish-only]
+        options: [all, android-x64, windows-debug, apple, publish-only]
         default: all
         required: true
       release_tag:
@@ -75,7 +75,12 @@ jobs:
               '- Static library: `libv8_monolith-win-x64-release.zip` (Release)',
               '- Static library: `libv8_monolith-win-x64-debug.zip` (Debug)',
               '- Header files: `include-win.zip`',
-              '- Package includes: static library + args.gn + args.full.txt'
+              '- Package includes: static library + args.gn + args.full.txt',
+              '',
+              '### Apple (iOS / macOS)',
+              '- XCFramework: `libv8_monolith-apple.zip`',
+              '- Slices: iOS arm64 device, iOS arm64 simulator, macOS arm64',
+              '- Package includes headers and per-slice args.gn + args.full.txt'
             ].join('\n');
             
             const manual = context.eventName === 'workflow_dispatch';
@@ -83,6 +88,7 @@ jobs:
             const outputs = {
               'android-x64': ['libv8_monolith-android-x64.zip'],
               'windows-debug': ['libv8_monolith-win-x64-debug.zip'],
+              apple: ['libv8_monolith-apple.zip'],
               'publish-only': [],
               all: [
                 'libv8_monolith-android-arm64.zip',
@@ -91,7 +97,8 @@ jobs:
                 'include-android.zip',
                 'libv8_monolith-win-x64-release.zip',
                 'libv8_monolith-win-x64-debug.zip',
-                'include-win.zip'
+                'include-win.zip',
+                'libv8_monolith-apple.zip'
               ]
             };
             if (!Object.hasOwn(outputs, target)) {
@@ -171,7 +178,7 @@ jobs:
 
   build-android:
     name: android
-    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || inputs.target != 'windows-debug')
+    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || (inputs.target != 'windows-debug' && inputs.target != 'apple'))
     env:
       JOB_NAME: android
     needs: create-release
@@ -359,8 +366,7 @@ jobs:
           asset_name: include-${{ env.JOB_NAME }}.zip
 
   build-apple:
-    # Temporarily paused while Android and Windows builds are stabilized.
-    if: false
+    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'apple')
     name: apple
     env:
       JOB_NAME: apple
@@ -510,18 +516,18 @@ jobs:
           ls -lh ../libv8_monolith-${{ env.JOB_NAME }}.zip
           echo "::endgroup::"
       - name: Upload XCFramework
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: ./.github/actions/upload-release-asset
         with:
+          token: ${{ github.token }}
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          release_tag: ${{ env.RELEASE_TAG }}
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ${{ github.workspace }}/libv8_monolith-${{ env.JOB_NAME }}.zip
           asset_name: libv8_monolith-${{ env.JOB_NAME }}.zip
-          asset_content_type: application/zip
 
   build-win:
     name: windows
-    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || inputs.target != 'android-x64')
+    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || (inputs.target != 'android-x64' && inputs.target != 'apple'))
     env:
       JOB_NAME: win
     needs: create-release
@@ -688,15 +694,18 @@ jobs:
 
   publish-release:
     name: publish release
-    needs: [create-release, build-android, build-win]
+    needs: [create-release, build-android, build-win, build-apple]
     if: >-
       ${{ always() && needs.create-release.result == 'success' &&
           (needs.build-android.result == 'success' ||
            (needs.build-android.result == 'skipped' &&
-            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && inputs.target == 'windows-debug')))) &&
+            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.target == 'windows-debug' || inputs.target == 'apple'))))) &&
           (needs.build-win.result == 'success' ||
            (needs.build-win.result == 'skipped' &&
-            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && inputs.target == 'android-x64')))) }}
+            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.target == 'android-x64' || inputs.target == 'apple'))))) &&
+          (needs.build-apple.result == 'success' ||
+           (needs.build-apple.result == 'skipped' &&
+            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.target == 'android-x64' || inputs.target == 'windows-debug'))))) }}
     runs-on: ubuntu-latest
     steps:
     - name: Publish Release
@@ -726,7 +735,8 @@ jobs:
             'include-android.zip',
             'libv8_monolith-win-x64-release.zip',
             'libv8_monolith-win-x64-debug.zip',
-            'include-win.zip'
+            'include-win.zip',
+            'libv8_monolith-apple.zip'
           ];
           const missing = required.filter(name => !assets.some(asset =>
             asset.name === name && asset.size > 0 && asset.state === 'uploaded'));
