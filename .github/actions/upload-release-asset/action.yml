@@ -1,0 +1,115 @@
+name: Upload missing release asset
+description: Reuse complete assets on the same draft release and verify new uploads.
+
+inputs:
+  release_id:
+    description: ID of the validated draft release
+    required: true
+  release_tag:
+    description: Expected tag of the draft release
+    required: true
+  upload_url:
+    description: Upload URL returned for the draft release
+    required: true
+  asset_path:
+    description: Local file to upload
+    required: true
+  asset_name:
+    description: Release asset name
+    required: true
+  token:
+    description: Token with write access to repository contents
+    required: true
+
+outputs:
+  should_upload:
+    description: Whether the asset was missing and required an upload
+    value: ${{ steps.prepare.outputs.should_upload }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate draft and inspect existing asset
+      id: prepare
+      uses: actions/github-script@v7
+      env:
+        RELEASE_ID: ${{ inputs.release_id }}
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        UPLOAD_URL: ${{ inputs.upload_url }}
+        ASSET_PATH: ${{ inputs.asset_path }}
+        ASSET_NAME: ${{ inputs.asset_name }}
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const fs = require('fs');
+          const releaseId = Number(process.env.RELEASE_ID);
+          if (!Number.isSafeInteger(releaseId) || releaseId <= 0) {
+            throw new Error(`Invalid release ID: ${process.env.RELEASE_ID}`);
+          }
+          const { data: release } = await github.rest.repos.getRelease({
+            ...context.repo,
+            release_id: releaseId
+          });
+          if (release.tag_name !== process.env.RELEASE_TAG || !release.draft) {
+            throw new Error(`Release ${releaseId} must still be the draft for ${process.env.RELEASE_TAG}.`);
+          }
+          if (release.upload_url !== process.env.UPLOAD_URL) {
+            throw new Error(`Upload URL does not match release ${releaseId}.`);
+          }
+          const file = fs.statSync(process.env.ASSET_PATH);
+          if (!file.isFile() || file.size <= 0 || file.size >= 2 ** 31) {
+            throw new Error(`Release asset must be a nonempty file smaller than 2 GiB: ${process.env.ASSET_PATH}`);
+          }
+          core.setOutput('asset_size', file.size);
+          const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+            ...context.repo,
+            release_id: releaseId,
+            per_page: 100
+          });
+          const matches = assets.filter(asset => asset.name === process.env.ASSET_NAME);
+          if (matches.length > 1) {
+            throw new Error(`Multiple assets named ${process.env.ASSET_NAME} exist on release ${releaseId}.`);
+          }
+          if (matches.length) {
+            const asset = matches[0];
+            if (!(asset.size > 0) || asset.state !== 'uploaded') {
+              throw new Error(`Existing asset ${asset.name} is empty or unfinished; it will not be overwritten.`);
+            }
+            core.setOutput('should_upload', 'false');
+            core.info(`Reusing complete asset ${asset.name} on draft ${process.env.RELEASE_TAG}.`);
+          } else {
+            core.setOutput('should_upload', 'true');
+          }
+
+    - name: Upload missing asset
+      if: steps.prepare.outputs.should_upload == 'true'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        upload_url: ${{ inputs.upload_url }}
+        asset_path: ${{ inputs.asset_path }}
+        asset_name: ${{ inputs.asset_name }}
+        asset_content_type: application/zip
+
+    - name: Verify uploaded asset
+      if: steps.prepare.outputs.should_upload == 'true'
+      uses: actions/github-script@v7
+      env:
+        RELEASE_ID: ${{ inputs.release_id }}
+        ASSET_NAME: ${{ inputs.asset_name }}
+        ASSET_SIZE: ${{ steps.prepare.outputs.asset_size }}
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+            ...context.repo,
+            release_id: Number(process.env.RELEASE_ID),
+            per_page: 100
+          });
+          const matches = assets.filter(asset => asset.name === process.env.ASSET_NAME);
+          if (matches.length !== 1 || matches[0].state !== 'uploaded' ||
+              matches[0].size !== Number(process.env.ASSET_SIZE)) {
+            throw new Error(`Uploaded asset ${process.env.ASSET_NAME} is missing, unfinished or has the wrong size.`);
+          }
+          core.info(`Verified ${matches[0].name}: ${matches[0].size} bytes.`);

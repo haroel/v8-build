@@ -19,10 +19,25 @@ use_sysroot=false
 v8_deprecation_warnings=false
 v8_enable_builtins_optimization=false
 v8_enable_gdbjit=false
+# Preserve the current JS JIT tiers and native WebAssembly.
+v8_enable_lite_mode=false
+v8_jitless=false
+v8_enable_drumbrake=false
+v8_enable_sparkplug=true
+v8_enable_turbofan=true
+v8_enable_maglev=true
+# Keep Maglev graph diagnostics, including the default Debug labeller.
+v8_enable_maglev_graph_printer=true
+v8_always_enable_maglev_graph_labeller=true
 v8_enable_i18n_support=false
 v8_enable_pointer_compression=false
 v8_enable_sandbox=false
 v8_enable_snapshot_compression=false
+# Keep Windows tracing, profiling names, and native unwinding.
+v8_enable_system_instrumentation=true
+v8_enable_etw_stack_walking=true
+v8_win64_unwinding_info=true
+cppgc_enable_object_names=true
 v8_enable_temporal_support=false
 v8_enable_test_features=false
 v8_enable_fuzztest=false

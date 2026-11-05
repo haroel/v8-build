@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Build targets to retry against an existing draft release
+        description: Build targets to retry, or publish a complete existing release
         type: choice
-        options: [all, android-x64, windows-debug]
+        options: [all, android-x64, windows-debug, publish-only]
         default: all
         required: true
       release_tag:
@@ -28,6 +28,11 @@ env:
 permissions:
   contents: write
 
+# Tag builds and manual recovery must not upload to the same release concurrently.
+concurrency:
+  group: v8-release-${{ inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
 defaults:
   run:
     shell: bash
@@ -39,6 +44,7 @@ jobs:
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       release_id: ${{ steps.create_release.outputs.release_id }}
+      skip_builds: ${{ steps.create_release.outputs.skip_builds }}
     steps:
       - name: Create or validate draft release
         id: create_release
@@ -72,18 +78,40 @@ jobs:
               '- Package includes: static library + args.gn + args.full.txt'
             ].join('\n');
             
+            const manual = context.eventName === 'workflow_dispatch';
+            const target = manual ? (context.payload.inputs?.target || 'all') : 'all';
+            const outputs = {
+              'android-x64': ['libv8_monolith-android-x64.zip'],
+              'windows-debug': ['libv8_monolith-win-x64-debug.zip'],
+              'publish-only': [],
+              all: [
+                'libv8_monolith-android-arm64.zip',
+                'libv8_monolith-android-arm.zip',
+                'libv8_monolith-android-x64.zip',
+                'include-android.zip',
+                'libv8_monolith-win-x64-release.zip',
+                'libv8_monolith-win-x64-debug.zip',
+                'include-win.zip'
+              ]
+            };
+            if (!Object.hasOwn(outputs, target)) {
+              throw new Error(`Unsupported retry target: ${target}`);
+            }
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              ...context.repo,
+              per_page: 100
+            });
+            const existing = releases.find(candidate => candidate.tag_name === tag);
+            if (manual && !existing) {
+              throw new Error(`Draft release ${tag} does not exist; push a new version tag for a fresh build.`);
+            }
             let release;
-            if (context.eventName === 'workflow_dispatch') {
-              const releases = await github.paginate(github.rest.repos.listReleases, {
-                ...context.repo,
-                per_page: 100
-              });
-              const existing = releases.find(candidate => candidate.tag_name === tag);
-              if (!existing) {
-                throw new Error(`Draft release ${tag} does not exist; push a new version tag for a fresh build.`);
-              }
+            if (existing) {
               release = { data: existing };
-              if (!release.data.draft) {
+              if (!manual && release.data.target_commitish !== context.sha) {
+                throw new Error(`Release ${tag} was created from a different commit; use a fresh release tag.`);
+              }
+              if (manual && !release.data.draft && target !== 'publish-only') {
                 throw new Error(`Release ${tag} is already published; targeted retries require a draft.`);
               }
               // A retry may update test/packaging code, but its compiled inputs
@@ -113,33 +141,17 @@ jobs:
               if (changed.length) {
                 throw new Error(`Build inputs differ from ${tag}: ${changed.sort().join(', ')}; use a fresh release tag.`);
               }
-              const target = context.payload.inputs?.target || 'all';
-              const outputs = {
-                'android-x64': ['libv8_monolith-android-x64.zip'],
-                'windows-debug': ['libv8_monolith-win-x64-debug.zip'],
-                all: [
-                  'libv8_monolith-android-arm64.zip',
-                  'libv8_monolith-android-arm.zip',
-                  'libv8_monolith-android-x64.zip',
-                  'include-android.zip',
-                  'libv8_monolith-win-x64-release.zip',
-                  'libv8_monolith-win-x64-debug.zip',
-                  'include-win.zip'
-                ]
-              };
-              if (!outputs[target]) {
-                throw new Error(`Unsupported retry target: ${target}`);
-              }
               const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
                 ...context.repo,
                 release_id: release.data.id,
                 per_page: 100
               });
-              const duplicates = outputs[target].filter(name => assets.some(asset => asset.name === name));
-              if (duplicates.length) {
-                throw new Error(`Cannot retry ${target} for ${tag}; selected output assets already exist: ${duplicates.join(', ')}. Choose only a missing target; existing assets are not overwritten.`);
+              const incomplete = assets.filter(asset => outputs[target].includes(asset.name) &&
+                (asset.size <= 0 || asset.state !== 'uploaded'));
+              if (incomplete.length) {
+                throw new Error(`Cannot reuse incomplete assets for ${tag}: ${incomplete.map(asset => asset.name).join(', ')}. Remove the failed uploads before retrying.`);
               }
-              core.info(`Reusing draft ${tag}; builder.js and all GN input blob SHAs match ${context.sha}.`);
+              core.info(`Reusing release ${tag}; builder.js and all GN input blob SHAs match ${context.sha}. Complete assets will be preserved.`);
             } else {
               release = await github.rest.repos.createRelease({
                 ...context.repo,
@@ -154,11 +166,12 @@ jobs:
             
             core.setOutput('upload_url', release.data.upload_url);
             core.setOutput('release_id', release.data.id);
+            core.setOutput('skip_builds', String(target === 'publish-only' || !release.data.draft));
             return release.data;
 
   build-android:
     name: android
-    if: github.event_name != 'workflow_dispatch' || inputs.target != 'windows-debug'
+    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || inputs.target != 'windows-debug')
     env:
       JOB_NAME: android
     needs: create-release
@@ -326,24 +339,24 @@ jobs:
           path: build/android-smoke/**/smoke.log
           if-no-files-found: ignore
       - name: Upload static library
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: ./.github/actions/upload-release-asset
         with:
+          token: ${{ github.token }}
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          release_tag: ${{ env.RELEASE_TAG }}
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ${{ github.workspace }}/libv8_monolith-${{ env.JOB_NAME }}-${{ matrix.platform }}.zip
           asset_name: libv8_monolith-${{ env.JOB_NAME }}-${{ matrix.platform }}.zip
-          asset_content_type: application/zip
       - name: Upload include
         if: matrix.platform == 'arm64'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: ./.github/actions/upload-release-asset
         with:
+          token: ${{ github.token }}
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          release_tag: ${{ env.RELEASE_TAG }}
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ${{ github.workspace }}/include-${{ env.JOB_NAME }}.zip
           asset_name: include-${{ env.JOB_NAME }}.zip
-          asset_content_type: application/zip
 
   build-apple:
     # Temporarily paused while Android and Windows builds are stabilized.
@@ -508,7 +521,7 @@ jobs:
 
   build-win:
     name: windows
-    if: github.event_name != 'workflow_dispatch' || inputs.target != 'android-x64'
+    if: needs.create-release.outputs.skip_builds != 'true' && (github.event_name != 'workflow_dispatch' || inputs.target != 'android-x64')
     env:
       JOB_NAME: win
     needs: create-release
@@ -654,24 +667,24 @@ jobs:
           }
           echo "::endgroup::"
       - name: Upload static library
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: ./.github/actions/upload-release-asset
         with:
+          token: ${{ github.token }}
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          release_tag: ${{ env.RELEASE_TAG }}
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ${{ github.workspace }}/libv8_monolith-${{ env.JOB_NAME }}-${{ matrix.platform }}-${{ matrix.build_type }}.zip
           asset_name: libv8_monolith-${{ env.JOB_NAME }}-${{ matrix.platform }}-${{ matrix.build_type }}.zip
-          asset_content_type: application/zip
       - name: Upload include
         if: matrix.platform == 'x64' && matrix.build_type == 'release'
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: ./.github/actions/upload-release-asset
         with:
+          token: ${{ github.token }}
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          release_tag: ${{ env.RELEASE_TAG }}
           upload_url: ${{ needs.create-release.outputs.upload_url }}
           asset_path: ${{ github.workspace }}/include-${{ env.JOB_NAME }}.zip
           asset_name: include-${{ env.JOB_NAME }}.zip
-          asset_content_type: application/zip
 
   publish-release:
     name: publish release
@@ -679,9 +692,11 @@ jobs:
     if: >-
       ${{ always() && needs.create-release.result == 'success' &&
           (needs.build-android.result == 'success' ||
-           (github.event_name == 'workflow_dispatch' && inputs.target == 'windows-debug' && needs.build-android.result == 'skipped')) &&
+           (needs.build-android.result == 'skipped' &&
+            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && inputs.target == 'windows-debug')))) &&
           (needs.build-win.result == 'success' ||
-           (github.event_name == 'workflow_dispatch' && inputs.target == 'android-x64' && needs.build-win.result == 'skipped')) }}
+           (needs.build-win.result == 'skipped' &&
+            (needs.create-release.outputs.skip_builds == 'true' || (github.event_name == 'workflow_dispatch' && inputs.target == 'android-x64')))) }}
     runs-on: ubuntu-latest
     steps:
     - name: Publish Release
@@ -696,8 +711,8 @@ jobs:
             per_page: 100
           });
           const release = releases.find(candidate => candidate.tag_name === tag);
-          if (!release || String(release.id) !== process.env.EXPECTED_RELEASE_ID || !release.draft) {
-            throw new Error(`Draft release ${tag} changed or was already published during this build.`);
+          if (!release || String(release.id) !== process.env.EXPECTED_RELEASE_ID) {
+            throw new Error(`Release ${tag} changed during this build.`);
           }
           const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
             ...context.repo,
@@ -718,9 +733,14 @@ jobs:
           if (missing.length) {
             throw new Error(`Cannot publish ${tag}; required assets are missing, empty or unfinished: ${missing.join(', ')}`);
           }
+          if (!release.draft) {
+            core.info(`Release ${tag} is already public with all ${required.length} required assets.`);
+            return;
+          }
           await github.rest.repos.updateRelease({
             ...context.repo,
             release_id: release.id,
-            draft: false
+            draft: false,
+            make_latest: 'true'
           });
           core.info(`Release ${tag} published after verifying all ${required.length} required assets.`);

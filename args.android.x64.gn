@@ -24,6 +24,16 @@ use_ml_inliner=false
 v8_deprecation_warnings=false
 v8_enable_builtins_optimization=false
 v8_enable_gdbjit=false
+# Preserve the current JS JIT tiers and native WebAssembly.
+v8_enable_lite_mode=false
+v8_jitless=false
+v8_enable_drumbrake=false
+v8_enable_sparkplug=true
+v8_enable_turbofan=true
+v8_enable_maglev=true
+# Standalone V8 otherwise includes Maglev graph diagnostics.
+v8_enable_maglev_graph_printer=false
+v8_always_enable_maglev_graph_labeller=false
 v8_enable_i18n_support=false
 v8_enable_pointer_compression=false
 v8_enable_sandbox=false
